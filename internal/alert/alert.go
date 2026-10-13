@@ -32,11 +32,44 @@ type Sender struct {
 	last map[string]time.Time
 }
 
-// Send redacts body and delivers at most once per rule+pane per Window.
+// Alert is one alert. It is the webhook JSON body.
+type Alert struct {
+	Rule   string    `json:"rule"`
+	Pane   string    `json:"pane"`
+	Agent  string    `json:"agent,omitempty"`
+	Reason string    `json:"reason"`
+	Time   time.Time `json:"time"`
+}
+
+// Text is the one-line human form used for Slack and Notify.
+func (a Alert) Text() string {
+	t := "Nighthawk " + a.Rule
+	if a.Pane != "" {
+		t += " on pane " + a.Pane
+	}
+	if a.Agent != "" {
+		t += " (" + a.Agent + ")"
+	}
+	if a.Reason != "" {
+		t += ": " + a.Reason
+	}
+	return t
+}
+
+// defaultClient bounds each delivery so a slow endpoint cannot pin a goroutine.
+var defaultClient = &http.Client{Timeout: 5 * time.Second}
+
+// Send delivers rule, pane and reason body. See SendAlert.
 func (s *Sender) Send(ctx context.Context, rule, pane, body string) error {
+	return s.SendAlert(ctx, Alert{Rule: rule, Pane: pane, Reason: body})
+}
+
+// SendAlert redacts the reason and delivers at most once per rule+pane per Window.
+func (s *Sender) SendAlert(ctx context.Context, a Alert) error {
 	if s == nil {
 		return nil
 	}
+	rule, pane := a.Rule, a.Pane
 	window := s.Window
 	if window == 0 {
 		window = 5 * time.Minute
@@ -57,15 +90,18 @@ func (s *Sender) Send(ctx context.Context, rule, pane, body string) error {
 	s.last[key] = now()
 	s.mu.Unlock()
 
-	body = redact.String(body)
+	a.Reason = redact.String(a.Reason)
+	if a.Time.IsZero() {
+		a.Time = now().UTC()
+	}
 	client := s.HTTP
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultClient
 	}
 
 	var firstErr error
 	if s.SlackURL != "" {
-		payload, _ := json.Marshal(map[string]string{"text": body})
+		payload, _ := json.Marshal(map[string]string{"text": a.Text()})
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.SlackURL, bytes.NewReader(payload))
 		if err != nil {
 			firstErr = err
@@ -84,19 +120,23 @@ func (s *Sender) Send(ctx context.Context, rule, pane, body string) error {
 		}
 	}
 	if s.WebhookURL != "" {
-		if err := s.postWebhook(ctx, client, body); err != nil && firstErr == nil {
+		body, err := json.Marshal(a)
+		if err == nil {
+			err = s.postWebhook(ctx, client, body)
+		}
+		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	if s.Notify != nil {
-		if err := s.Notify(rule, body); err != nil && firstErr == nil {
+		if err := s.Notify(rule, a.Text()); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
 }
 
-func (s *Sender) postWebhook(ctx context.Context, client *http.Client, body string) error {
+func (s *Sender) postWebhook(ctx context.Context, client *http.Client, body []byte) error {
 	backoff := s.Backoff
 	if backoff == 0 {
 		backoff = 10 * time.Millisecond
@@ -110,14 +150,14 @@ func (s *Sender) postWebhook(ctx context.Context, client *http.Client, body stri
 			case <-time.After(backoff):
 			}
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.WebhookURL, bytes.NewReader([]byte(body)))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.WebhookURL, bytes.NewReader(body))
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Content-Type", "text/plain")
+		req.Header.Set("Content-Type", "application/json")
 		if s.Secret != "" {
 			mac := hmac.New(sha256.New, []byte(s.Secret))
-			mac.Write([]byte(body))
+			mac.Write(body)
 			req.Header.Set("X-Nighthawk-Signature", hex.EncodeToString(mac.Sum(nil)))
 		}
 		resp, err := client.Do(req)

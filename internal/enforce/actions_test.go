@@ -2,6 +2,7 @@ package enforce
 
 import (
 	"context"
+	"fmt"
 	"syscall"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func (f *fakeH) ProcessInfo(context.Context, string) (herdr.ProcessInfo, error) 
 func (f *fakeH) Notify(context.Context, string, string) error { f.notes++; return nil }
 
 func TestKillStaysInTree(t *testing.T) {
-	f := &fakeH{info: herdr.ProcessInfo{ShellPID: 10, PIDs: []int{11, 99}}}
+	f := &fakeH{info: herdr.ProcessInfo{ShellPID: 10, Processes: []herdr.Process{{PID: 11}, {PID: 99}}}}
 	var signaled []int
 	var audits int
 	a := &Actions{
@@ -55,13 +56,13 @@ func TestPauseAudits(t *testing.T) {
 	if err := a.Pause(context.Background(), "p", "claude"); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.keys) != 1 || f.keys[0] != "Escape" || f.notes != 1 || audits != 1 {
+	if len(f.keys) != 1 || f.keys[0] != "esc" || f.notes != 1 || audits != 1 {
 		t.Fatalf("%+v", f)
 	}
 }
 
 func TestKillEscalates(t *testing.T) {
-	f := &fakeH{info: herdr.ProcessInfo{ShellPID: 10, PIDs: []int{11}}}
+	f := &fakeH{info: herdr.ProcessInfo{ShellPID: 10, Processes: []herdr.Process{{PID: 11}}}}
 	var sigs []syscall.Signal
 	a := &Actions{
 		H:    f,
@@ -80,6 +81,36 @@ func TestKillEscalates(t *testing.T) {
 	}
 	if len(sigs) != 2 || sigs[0] != syscall.SIGTERM || sigs[1] != syscall.SIGKILL {
 		t.Fatalf("%v", sigs)
+	}
+}
+
+func TestKillRechecksBeforeSIGKILL(t *testing.T) {
+	f := &fakeH{info: herdr.ProcessInfo{ShellPID: 10, Processes: []herdr.Process{{PID: 11}, {PID: 12}}}}
+	var sigs []string
+	checks := map[int]int{}
+	a := &Actions{
+		H:    f,
+		Wait: time.Millisecond,
+		Signal: func(pid int, sig syscall.Signal) error {
+			sigs = append(sigs, fmt.Sprintf("%d:%d", pid, sig))
+			return nil
+		},
+		Audit: func([]byte) {},
+		// pid 12 exits on SIGTERM and its number is reused outside the pane.
+		Descended: func(pid, ancestor int) bool {
+			checks[pid]++
+			return ancestor == 10 && (pid == 11 || checks[pid] == 1)
+		},
+	}
+	if err := a.Kill(context.Background(), "p"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		fmt.Sprintf("11:%d", syscall.SIGTERM), fmt.Sprintf("12:%d", syscall.SIGTERM),
+		fmt.Sprintf("11:%d", syscall.SIGKILL),
+	}
+	if fmt.Sprint(sigs) != fmt.Sprint(want) {
+		t.Fatalf("sigs %v want %v", sigs, want)
 	}
 }
 

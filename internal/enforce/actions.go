@@ -57,7 +57,8 @@ func (a *Actions) Kill(ctx context.Context, paneID string) error {
 	}
 	var sigErr error
 	var killed []int
-	for _, pid := range info.PIDs {
+	for _, proc := range info.Processes {
+		pid := proc.PID
 		if !desc(pid, info.ShellPID) {
 			continue
 		}
@@ -73,6 +74,10 @@ func (a *Actions) Kill(ctx context.Context, paneID string) error {
 			t.Stop()
 		case <-t.C:
 			for _, pid := range killed {
+				// Re-check: the pid may have exited and been reused.
+				if !desc(pid, info.ShellPID) {
+					continue
+				}
 				if e := sig(pid, syscall.SIGKILL); e != nil && sigErr == nil {
 					sigErr = e
 				}

@@ -39,7 +39,7 @@ type Options struct {
 	ListenEgress bool
 	// Judge may only tighten a decision. Nil disables the judge.
 	Judge func(ctx context.Context, e event.Event, d policy.Decision) policy.Decision
-	// Alert is called for any decision other than allow. body is a rule id.
+	// Alert is called for any decision other than allow. body is the decision reason.
 	Alert func(rule, pane, body string)
 }
 

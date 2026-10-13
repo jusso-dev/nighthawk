@@ -27,7 +27,7 @@ func (s *Server) follow(ctx context.Context) {
 			return
 		}
 		key := s.livePaneKey()
-		if key == subKey && (subCancel != nil || key == "") {
+		if key == subKey && subCancel != nil {
 			return
 		}
 		if subCancel != nil {
@@ -35,9 +35,6 @@ func (s *Server) follow(ctx context.Context) {
 			subCancel = nil
 		}
 		subKey = key
-		if key == "" {
-			return
-		}
 		subCtx, cancel := context.WithCancel(ctx)
 		subCancel = cancel
 		go s.subscribe(subCtx, sock)
@@ -91,8 +88,10 @@ func (s *Server) reconcile(ctx context.Context) {
 	}
 }
 
+// subscriptions always includes the global pane.agent_detected, so new panes
+// are seen before the next reconcile tick.
 func (s *Server) subscriptions() []herdr.Subscription {
-	var subs []herdr.Subscription
+	subs := []herdr.Subscription{{Event: "pane.agent_detected"}}
 	for _, p := range s.sessions.List() {
 		if p.ID == "" || !p.Ended.IsZero() {
 			continue
@@ -100,7 +99,7 @@ func (s *Server) subscriptions() []herdr.Subscription {
 		subs = append(subs, herdr.Subscription{Event: "pane.agent_status_changed", PaneID: p.ID})
 		for _, pat := range detect.OutputPatterns {
 			subs = append(subs, herdr.Subscription{
-				Event: "pane.output_matched", PaneID: p.ID, Match: pat.Re.String(),
+				Event: "pane.output_matched", PaneID: p.ID, Match: herdr.Regex(pat.Re.String()),
 				Source: "recent", Lines: 200, StripANSI: true,
 			})
 		}
@@ -110,11 +109,9 @@ func (s *Server) subscriptions() []herdr.Subscription {
 
 func (s *Server) subscribe(ctx context.Context, sock string) {
 	subs := s.subscriptions()
-	if len(subs) == 0 {
-		return
-	}
 	ch, err := herdr.Subscribe(ctx, sock, subs, func() error {
-		s.reconcile(ctx)
+		// Rebuild subscriptions if a pane closed or appeared while disconnected.
+		s.wakeSubs()
 		return nil
 	})
 	if err != nil || ch == nil {
@@ -143,6 +140,9 @@ func (s *Server) subscribe(ctx context.Context, sock string) {
 			}
 			if probe.PaneID != "" {
 				s.savePane(s.sessions.Get(probe.PaneID))
+			}
+			if env.Event == "pane.agent_detected" || env.Event == "pane_agent_detected" {
+				s.wakeSubs()
 			}
 		}
 	}
