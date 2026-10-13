@@ -39,8 +39,12 @@ type Evaluator interface {
 // OnError is the fail-closed rule: if evaluation fails, unattended mode blocks
 // and attended mode asks a human. Nothing ever silently allows on error.
 func OnError(m Mode, err error) Decision {
-	if m == Unattended {
-		return Decision{Action: Block, RuleID: "nh.failclosed", Reason: "policy error: " + err.Error()}
+	reason := "policy error"
+	if err != nil {
+		reason += ": " + err.Error()
 	}
-	return Decision{Action: AskHuman, RuleID: "nh.failclosed", Reason: "policy error: " + err.Error()}
+	if m == Unattended {
+		return Decision{Action: Block, RuleID: "nh.failclosed", Reason: reason}
+	}
+	return Decision{Action: AskHuman, RuleID: "nh.failclosed", Reason: reason}
 }

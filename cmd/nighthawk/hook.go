@@ -23,23 +23,30 @@ func cmdHook(args []string, in io.Reader, out, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "nighthawk: unknown agent %q\n", args[0])
 		return 2
 	}
-	body, err := io.ReadAll(io.LimitReader(in, 1<<20+1))
-	if err != nil {
-		fmt.Fprintln(errOut, "nighthawk: read hook input")
+	state := config.StateDir()
+	// Claude Code treats exit 1 as non-blocking, so input we cannot check
+	// must still deny when nobody is watching.
+	reject := func(msg string) int {
+		fmt.Fprintln(errOut, "nighthawk: "+msg)
+		if config.ReadMode(state) == policy.Unattended {
+			_, _ = out.Write(claude.DenyStdout("nh.failclosed"))
+			return 0
+		}
 		return 1
 	}
+	body, err := io.ReadAll(io.LimitReader(in, 1<<20+1))
+	if err != nil {
+		return reject("read hook input")
+	}
 	if len(body) > 1<<20 {
-		fmt.Fprintln(errOut, "nighthawk: hook input too large")
-		return 1
+		return reject("hook input too large")
 	}
 	pane := os.Getenv("HERDR_PANE_ID")
 	task := cost.TaskID(args[0], os.Getenv("NIGHTHAWK_TASK_ID"))
 	evs, err := ad.ToEvents(body, pane, task)
 	if err != nil {
-		fmt.Fprintln(errOut, "nighthawk: hook json")
-		return 1
+		return reject("hook json")
 	}
-	state := config.StateDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var deny bool

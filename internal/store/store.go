@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -498,10 +499,21 @@ func (s *Store) GetApproval(ctx context.Context, id string) (Approval, error) {
 	return a, nil
 }
 
+// ErrNoPendingApproval means the id is unknown, already decided or expired.
+var ErrNoPendingApproval = errors.New("no pending approval")
+
+// ResolveApproval decides a pending, unexpired approval once.
 func (s *Store) ResolveApproval(ctx context.Context, id, status, who string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE approvals SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?`,
-		status, who, time.Now().UnixMilli(), id)
-	return err
+	now := time.Now().UnixMilli()
+	res, err := s.db.ExecContext(ctx, `UPDATE approvals SET status = ?, decided_by = ?, decided_at = ? WHERE id = ? AND status = 'pending' AND expires_at > ?`,
+		status, who, now, id, now)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return ErrNoPendingApproval
+	}
+	return nil
 }
 
 func (s *Store) ListApprovals(ctx context.Context, status string) ([]Approval, error) {

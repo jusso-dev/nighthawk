@@ -77,3 +77,29 @@ func openTest(t *testing.T) *Store {
 	t.Cleanup(func() { s.Close() })
 	return s
 }
+
+func TestResolveApprovalOnlyPending(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "nighthawk.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.ResolveApproval(ctx, "missing", "approved", "cli"); err != ErrNoPendingApproval {
+		t.Fatalf("unknown id: %v", err)
+	}
+	for id, exp := range map[string]time.Time{"live": time.Now().Add(time.Minute), "old": time.Now().Add(-time.Minute)} {
+		if err := s.InsertApproval(ctx, Approval{ID: id, EventID: "e", RuleID: "r", Status: "pending", ExpiresAt: exp}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ResolveApproval(ctx, "old", "approved", "cli"); err != ErrNoPendingApproval {
+		t.Fatalf("expired: %v", err)
+	}
+	if err := s.ResolveApproval(ctx, "live", "denied", "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResolveApproval(ctx, "live", "approved", "cli"); err != ErrNoPendingApproval {
+		t.Fatalf("second decision: %v", err)
+	}
+}

@@ -3,9 +3,11 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
+	"github.com/jusso-dev/nighthawk/internal/audit"
 	"github.com/jusso-dev/nighthawk/internal/config"
 	"github.com/jusso-dev/nighthawk/internal/cost"
 	"github.com/jusso-dev/nighthawk/internal/event"
@@ -55,9 +57,13 @@ func (s *Server) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 			status = "denied"
 		}
 		if err := s.st.ResolveApproval(ctx, req.ID, status, req.Who); err != nil {
+			if errors.Is(err, store.ErrNoPendingApproval) {
+				return ipc.Response{Error: "no pending approval " + req.ID}
+			}
 			return ipc.Response{Error: "approval"}
 		}
-		s.auditRaw([]byte("approval " + req.ID + " " + status))
+		payload, _ := audit.Canonical(map[string]string{"approval_id": req.ID, "status": status, "decided_by": req.Who})
+		s.auditRaw(payload)
 		return ipc.Response{OK: true}
 	case "approvals.list":
 		rows, err := s.st.ListApprovals(ctx, req.Kind)
