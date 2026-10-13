@@ -181,7 +181,12 @@ func (r compiled) matches(ev event.Event, m Mode, facts Facts) bool {
 		return false
 	}
 	if mt.HostNotIn == "allowlist" {
+		// A hook event with no host (WebSearch) has no destination to check.
+		// Egress always has one, so an empty egress host stays unknown.
 		host := attr(ev, "host")
+		if host == "" && ev.Source != event.SourceEgress {
+			return false
+		}
 		if facts.HostAllowed == nil || facts.HostAllowed(host) {
 			return false
 		}

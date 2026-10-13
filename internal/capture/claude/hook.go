@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -69,7 +70,8 @@ func ToEvents(in HookInput, pane, task string) []event.Event {
 		base.Attrs["tool"] = name
 		base.Attrs["path"] = first(in.ToolInput, "file_path", "path")
 	case name == "Read":
-		path := first(in.ToolInput, "file_path", "path")
+		// Clean first so skills/../.ssh/id_rsa is not mistaken for a skill.
+		path := cleanPath(first(in.ToolInput, "file_path", "path"))
 		if strings.HasSuffix(path, "SKILL.md") || strings.Contains(path, "/skills/") {
 			base.Kind = event.KindSkill
 			base.Attrs["path"] = path
@@ -83,14 +85,33 @@ func ToEvents(in HookInput, pane, task string) []event.Event {
 		base.Kind = event.KindSkill
 		base.Attrs["name"] = first(in.ToolInput, "skill", "name")
 		base.Attrs["path"] = first(in.ToolInput, "path", "file_path")
-	case name == "WebFetch" || name == "WebSearch":
+	case name == "Grep" || name == "Glob":
+		// Set path so secret path rules see what the search reads.
+		base.Kind = event.KindToolCall
+		base.Attrs["tool"] = name
+		dir := str(in.ToolInput, "path")
+		pat := str(in.ToolInput, "glob")
+		if name == "Glob" {
+			pat = str(in.ToolInput, "pattern")
+		}
+		if pat != "" && !filepath.IsAbs(pat) {
+			pat = filepath.Join(dir, pat)
+		}
+		if pat == "" {
+			pat = dir
+		}
+		base.Attrs["path"] = cleanPath(pat)
+	case name == "WebSearch":
+		// A search query has no destination host.
 		base.Kind = event.KindNetwork
 		base.Attrs["tool"] = name
-		raw := first(in.ToolInput, "url", "query")
+		base.Attrs["query"] = str(in.ToolInput, "query")
+	case name == "WebFetch":
+		base.Kind = event.KindNetwork
+		base.Attrs["tool"] = name
+		raw := str(in.ToolInput, "url")
 		base.Attrs["url"] = raw
-		if u, err := url.Parse(raw); err == nil {
-			base.Attrs["host"] = u.Hostname()
-		}
+		base.Attrs["host"] = fetchHost(raw)
 	case strings.HasPrefix(name, "mcp__"):
 		base.Kind = event.KindMCPCall
 		srv, tool := splitMCP(name)
@@ -135,6 +156,27 @@ func splitMCP(name string) (string, string) {
 		return rest, ""
 	}
 	return srv, tool
+}
+
+func cleanPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	return filepath.Clean(p)
+}
+
+// fetchHost never returns "" so a URL with no parsable host stays unknown.
+func fetchHost(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	if u, err := url.Parse("https://" + raw); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	if raw == "" {
+		return "invalid"
+	}
+	return raw
 }
 
 func skillName(path string) string {
