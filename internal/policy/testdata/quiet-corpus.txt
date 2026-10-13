@@ -148,53 +148,53 @@ cargo build # variant 146
 make test # variant 147
 head README.md # variant 148
 wc -l main.go # variant 149
-ls # variant 150
-pwd # variant 151
-git status # variant 152
-git diff # variant 153
-git log -1 # variant 154
-git push origin main # variant 155
-git branch # variant 156
-go test ./... # variant 157
-go fmt ./... # variant 158
-go build ./... # variant 159
-cat README.md # variant 160
-echo hello # variant 161
-mkdir -p tmp # variant 162
-rm -rf ./build # variant 163
-rm file.txt # variant 164
-npm install lodash # variant 165
-npm test # variant 166
-git reset HEAD # variant 167
-git add -A # variant 168
-git commit -m wip # variant 169
-python3 -m pytest # variant 170
-cargo build # variant 171
-make test # variant 172
-head README.md # variant 173
-wc -l main.go # variant 174
-ls # variant 175
-pwd # variant 176
-git status # variant 177
-git diff # variant 178
-git log -1 # variant 179
-git push origin main # variant 180
-git branch # variant 181
-go test ./... # variant 182
-go fmt ./... # variant 183
-go build ./... # variant 184
-cat README.md # variant 185
-echo hello # variant 186
-mkdir -p tmp # variant 187
-rm -rf ./build # variant 188
-rm file.txt # variant 189
-npm install lodash # variant 190
-npm test # variant 191
-git reset HEAD # variant 192
-git add -A # variant 193
-git commit -m wip # variant 194
-python3 -m pytest # variant 195
-cargo build # variant 196
-make test # variant 197
-head README.md # variant 198
-wc -l main.go # variant 199
+git push origin feature
+git push -u origin feature/login
+git push --follow-tags
+git fetch --prune
+git checkout -b fix/typo
+git rebase origin/main
+git stash list
+rm -rf node_modules
+rm -rf dist/ .next/
+rm -f coverage.out
+grep foo src/
+grep -rn "process.env" src/
+rg TODO internal/
+cat .env.example
+cp .env.example .env.sample
+ls -la ~/.ssh
+ssh-add -l
+pip install requests
+pip install -r requirements.txt
+pip install -e .
+npm i lodash
+npm install @types/node
+npm run build
+yarn add react
+cargo install ripgrep
+go install golang.org/x/tools/gopls@latest
+go mod tidy
+go vet ./...
+curl -s https://api.github.com/repos/x/y | jq .name
+curl -fsSL https://example.com/data.json | python3 -m json.tool
+curl -o install.sh https://example.com/install.sh
+source .venv/bin/activate
+python3 -m venv .venv
+docker compose up -d
+docker run --rm -it alpine sh
+kill 1234
+pkill -f vite
+pgrep node
+cat ~/.zshrc
+grep hooks ~/.claude/settings.json
+nighthawk status
+nighthawk mode get
+echo $HTTPS_PROXY
+env | grep -i proxy
+find . -name "*.go" -newer go.mod
+sed -i '' 's/foo/bar/' main.go
+tar -czf build.tgz dist
+make lint
+terraform plan
+npx prisma generate

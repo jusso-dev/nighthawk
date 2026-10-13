@@ -3,14 +3,17 @@ package policy
 import "strings"
 
 // Segments returns the full command plus pieces split on ; && || and |.
-// bash -c / sh -c wrappers are unwrapped first. Quotes are respected.
+// bash -c / sh -c wrappers are unwrapped first, and the wrapped form is kept
+// so rules can still see `sh -c "$(curl ...)"`. Quotes are respected.
 func Segments(cmd string) []string {
 	cmd = collapse(cmd)
+	var out []string
 	if inner, ok := unwrapShell(cmd); ok {
+		out = append(out, cmd)
 		cmd = collapse(inner)
 	}
 	parts := splitOps(cmd)
-	out := []string{cmd}
+	out = append(out, cmd)
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p != "" && p != cmd {
