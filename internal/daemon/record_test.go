@@ -11,16 +11,6 @@ import (
 	"github.com/jusso-dev/nighthawk/internal/policy"
 )
 
-func testServer(t *testing.T, cfg config.Config) *Server {
-	t.Helper()
-	s, err := openServer(Options{StateDir: t.TempDir(), Config: cfg})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.st.Close() })
-	return s
-}
-
 func TestAuditCoversEventAndTablesAppendOnly(t *testing.T) {
 	s := testServer(t, config.Default())
 	ev := event.Event{ID: "ev-audit", Kind: event.KindCommand, Source: event.SourceAgentHook, Agent: "claude",
