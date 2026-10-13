@@ -134,53 +134,153 @@ func (s *Server) deliverSIEM(ctx context.Context, payload string) error {
 	return nil
 }
 
-func (s *Server) transcriptLoop(ctx context.Context) {
-	paths := splitList(os.Getenv("NIGHTHAWK_TRANSCRIPT_PATHS"))
-	if len(paths) == 0 {
+// maxTranscripts bounds how many transcript files the daemon tails.
+const maxTranscripts = 256
+
+// transcriptTail is one transcript file and who its usage belongs to.
+type transcriptTail struct {
+	agent, pane, session, task string
+}
+
+// watchTranscript starts tailing the transcript a hook event names, and
+// keeps its pane, session and task tags current.
+func (s *Server) watchTranscript(ev event.Event) {
+	path := ev.Attrs["transcript_path"]
+	if path == "" || !filepath.IsAbs(path) || filepath.Ext(path) != ".jsonl" {
 		return
 	}
+	path = filepath.Clean(path)
+	session, task := ev.SessionID, ev.TaskID
+	if ev.PaneID != "" {
+		p := s.sessions.Get(ev.PaneID)
+		if session == "" {
+			session = p.AgentSessionID
+		}
+		if task == "" {
+			task = p.TaskID
+		}
+	}
+	s.trMu.Lock()
+	defer s.trMu.Unlock()
+	if s.trs == nil {
+		s.trs = map[string]*transcriptTail{}
+	}
+	t, ok := s.trs[path]
+	if !ok {
+		if len(s.trs) >= maxTranscripts {
+			return
+		}
+		t = &transcriptTail{}
+		s.trs[path] = t
+	}
+	setTag(&t.agent, ev.Agent)
+	setTag(&t.pane, ev.PaneID)
+	setTag(&t.session, session)
+	setTag(&t.task, task)
+}
+
+func setTag(dst *string, v string) {
+	if v != "" && v != "unknown" {
+		*dst = v
+	}
+}
+
+func (s *Server) transcriptLoop(ctx context.Context) {
+	for _, p := range splitList(os.Getenv("NIGHTHAWK_TRANSCRIPT_PATHS")) {
+		s.watchTranscript(event.Event{Attrs: map[string]string{"transcript_path": p}})
+	}
+	models := map[string]string{}
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
-	s.tailTranscripts(ctx, paths)
+	s.tailTranscripts(ctx, models)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.tailTranscripts(ctx, paths)
+			s.tailTranscripts(ctx, models)
 		}
 	}
 }
 
-func (s *Server) tailTranscripts(ctx context.Context, paths []string) {
-	for _, path := range paths {
+// tailTranscripts reads new lines from every watched transcript. models holds
+// the current Codex model per path, since Codex token lines do not name it.
+func (s *Server) tailTranscripts(ctx context.Context, models map[string]string) {
+	s.trMu.Lock()
+	tails := make(map[string]transcriptTail, len(s.trs))
+	for p, t := range s.trs {
+		tails[p] = *t
+	}
+	s.trMu.Unlock()
+	for path, tag := range tails {
 		off, err := s.st.GetOffset(ctx, path)
 		if err != nil {
 			continue
+		}
+		if _, ok := models[path]; !ok && off > 0 {
+			models[path] = codexModelBefore(path, off)
 		}
 		lines, next, err := transcript.ReadNew(path, off)
 		if err != nil {
 			continue
 		}
 		for _, line := range lines {
-			model, in, out, cr, cw, key, ok := transcript.ParseClaude(line)
-			agent := "claude"
+			if m, ok := transcript.CodexModel(line); ok {
+				models[path] = m
+				continue
+			}
+			u, ok := transcript.ParseClaude(line)
+			agent := tag.agent
+			if agent == "" {
+				agent = "claude"
+			}
 			if !ok {
-				model, in, out, cr, cw, key, ok = transcript.ParseCodex(line)
+				u, ok = transcript.ParseCodex(line)
 				agent = "codex"
+				if u.Model == "" {
+					u.Model = models[path]
+				}
+				if u.Key != "" {
+					u.Key = path + "#" + u.Key
+				}
 			}
 			if !ok {
 				continue
 			}
+			if u.TS.IsZero() {
+				u.TS = time.Now().UTC()
+			}
 			_ = s.st.InsertUsage(ctx, store.Usage{
-				TS: time.Now().UTC(), Agent: agent, Model: model,
-				Input: in, Output: out, CacheRead: cr, CacheWrite: cw, MessageKey: key,
+				TS: u.TS, PaneID: tag.pane, Agent: agent, SessionID: tag.session, TaskID: tag.task,
+				Model: u.Model, Input: u.Input, Output: u.Output, CacheRead: u.CacheRead,
+				CacheWrite: u.CacheWrite, MessageKey: u.Key,
 			})
 		}
 		if next != off {
 			_ = s.st.SetOffset(ctx, path, next)
 		}
 	}
+}
+
+// codexModelBefore finds the last Codex model named before byte off, for a
+// transcript resumed after a daemon restart.
+func codexModelBefore(path string, off int64) string {
+	lines, _, err := transcript.ReadNew(path, 0)
+	if err != nil {
+		return ""
+	}
+	var model string
+	var pos int64
+	for _, line := range lines {
+		if pos >= off {
+			break
+		}
+		pos += int64(len(line)) + 1
+		if m, ok := transcript.CodexModel(line); ok {
+			model = m
+		}
+	}
+	return model
 }
 
 func (s *Server) skillLoop(ctx context.Context) {

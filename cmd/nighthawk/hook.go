@@ -13,6 +13,7 @@ import (
 	"github.com/jusso-dev/nighthawk/internal/cost"
 	"github.com/jusso-dev/nighthawk/internal/policy"
 	"github.com/jusso-dev/nighthawk/internal/redact"
+	"github.com/jusso-dev/nighthawk/internal/setup"
 )
 
 func cmdHook(args []string, in io.Reader, out, errOut io.Writer) int {
@@ -38,8 +39,12 @@ func cmdHook(args []string, in io.Reader, out, errOut io.Writer) int {
 		}
 		return 1
 	}
-	body, err := io.ReadAll(io.LimitReader(in, 1<<20+1))
-	if err != nil {
+	// Codex runs notify programs with the JSON payload as the last argument.
+	var body []byte
+	var err error
+	if len(args) > 1 {
+		body = []byte(args[len(args)-1])
+	} else if body, err = io.ReadAll(io.LimitReader(in, 1<<20+1)); err != nil {
 		return reject("read hook input")
 	}
 	if len(body) > 1<<20 {
@@ -58,10 +63,16 @@ func cmdHook(args []string, in io.Reader, out, errOut io.Writer) int {
 	var warned bool
 	for _, ev := range evs {
 		if ev.Pre {
-			dec := decideEvent(ctx, state, ev)
+			dec, approval := decideWithApproval(ctx, state, ev)
 			if dec.RuleID == "nh.failopen" && !warned {
 				fmt.Fprintln(errOut, "nighthawk: daemon unreachable")
 				warned = true
+			}
+			if dec.Action == policy.AskHuman && approval != "" {
+				fmt.Fprintln(errOut, "nighthawk: waiting for approval "+approval)
+				if waitApproved(state, approval, approvalWait()) {
+					continue
+				}
 			}
 			if dec.Action != policy.Allow {
 				deny = true
@@ -75,4 +86,15 @@ func cmdHook(args []string, in io.Reader, out, errOut io.Writer) int {
 		_, _ = out.Write(claude.DenyStdout(rule))
 	}
 	return 0
+}
+
+// approvalWait is how long a hook holds a tool call for a human. It stays
+// under the PreToolUse timeout setup installs so the agent never kills the
+// hook first. NIGHTHAWK_APPROVAL_WAIT may only shorten it.
+func approvalWait() time.Duration {
+	limit := time.Duration(setup.ClaudePreToolTimeout)*time.Second - 10*time.Second
+	if d, err := time.ParseDuration(os.Getenv("NIGHTHAWK_APPROVAL_WAIT")); err == nil && d > 0 && d < limit {
+		return d
+	}
+	return limit
 }

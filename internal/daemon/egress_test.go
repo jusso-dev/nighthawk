@@ -96,7 +96,9 @@ func TestProxyCountsLoopOnce(t *testing.T) {
 			t.Fatal(resp.StatusCode)
 		}
 	}
-	probe := event.Event{Kind: event.KindNetwork, PaneID: "w1:p1"}
+	uhost, uport, _ := net.SplitHostPort(uln.Addr().String())
+	probe := event.Event{Kind: event.KindNetwork, PaneID: "w1:p1", Pre: true,
+		Attrs: map[string]string{"host": uhost, "port": uport}}
 	if got := s.loops.Add(probe, time.Minute, time.Now()); got != n+1 {
 		t.Fatalf("loop count %d, want %d", got, n+1)
 	}

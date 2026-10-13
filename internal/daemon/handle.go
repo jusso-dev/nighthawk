@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jusso-dev/nighthawk/internal/audit"
@@ -31,6 +32,7 @@ func (s *Server) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 		if req.Event == nil {
 			return ipc.Response{Error: "missing event"}
 		}
+		s.watchTranscript(*req.Event)
 		dec, approval := s.decide(ctx, *req.Event)
 		resp := ipc.Response{OK: true, Decision: &dec, Mode: s.currentMode()}
 		if approval != "" {
@@ -40,8 +42,12 @@ func (s *Server) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 	case "sessions.list":
 		return dataOK(s.sessions.List())
 	case "events.list":
+		from, err := parseSince(req.Since, time.Now())
+		if err != nil {
+			return ipc.Response{Error: err.Error()}
+		}
 		evs, err := s.st.ListEvents(ctx, store.Filter{
-			Agent: req.Agent, Kind: event.Kind(req.Kind), From: parseSince(req.Since, time.Now()),
+			Agent: req.Agent, Kind: event.Kind(req.Kind), From: from,
 		})
 		if err != nil {
 			return ipc.Response{Error: "store"}
@@ -51,6 +57,11 @@ func (s *Server) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 		return s.spend(ctx, req)
 	case "approval.wait":
 		return s.waitApproval(ctx, req)
+	case "approval.expire":
+		if err := s.st.ExpireApproval(ctx, req.ID); err != nil {
+			return ipc.Response{Error: "approval"}
+		}
+		return ipc.Response{OK: true}
 	case "approval.resolve":
 		status := req.Kind
 		if status != "approved" && status != "denied" {
@@ -137,7 +148,10 @@ func (s *Server) setMode(m policy.Mode) error {
 }
 
 func (s *Server) spend(ctx context.Context, req ipc.Request) ipc.Response {
-	since := parseSince(req.Since, time.Now())
+	since, err := parseSince(req.Since, time.Now())
+	if err != nil {
+		return ipc.Response{Error: err.Error()}
+	}
 	if req.Since == "" {
 		since = time.Now().Add(-24 * time.Hour)
 	}
@@ -149,29 +163,71 @@ func (s *Server) spend(ctx context.Context, req ipc.Request) ipc.Response {
 	if err != nil {
 		return ipc.Response{Error: "store"}
 	}
-	now := time.Now()
+	// Rows come split by day. Price each part at its own date, then merge.
 	lines := make([]cost.Line, 0, len(rows))
+	at := map[[2]string]int{}
 	for _, r := range rows {
-		lines = append(lines, s.prices.Line(cost.Usage{
+		l := s.prices.Line(cost.Usage{
 			Key: r.Key, Model: r.Model, Input: r.Input, Output: r.Output,
 			CacheRead: r.CacheRead, CacheWrite: r.CacheWrite,
-		}, now, s.opt.Config.CurrencyRateAUD))
+		}, r.At, s.opt.Config.CurrencyRateAUD)
+		k := [2]string{r.Key, r.Model}
+		i, ok := at[k]
+		if !ok {
+			at[k] = len(lines)
+			lines = append(lines, l)
+			continue
+		}
+		m := &lines[i]
+		m.Input += l.Input
+		m.Output += l.Output
+		m.CacheRead += l.CacheRead
+		m.CacheWrite += l.CacheWrite
+		m.USD += l.USD
+		m.AUD += l.AUD
+		if m.Source == "" {
+			m.Source = l.Source
+		}
+		m.Unpriced = m.Unpriced && l.Unpriced
 	}
 	return dataOK(lines)
 }
 
+// maxApprovalWait bounds one approval.wait call.
+const maxApprovalWait = 10 * time.Minute
+
+// waitApproval polls until the approval is decided, expires, or the wait
+// ends. An approval past its expiry is marked expired. A wait that ends
+// first returns it still pending; the caller decides whether to expire it.
+// It returns a little before ctx ends so the reply still reaches the client.
 func (s *Server) waitApproval(ctx context.Context, req ipc.Request) ipc.Response {
 	wait := req.Wait
 	if wait <= 0 {
 		wait = 30 * time.Second
 	}
-	deadline := time.Now().Add(wait)
+	if wait > maxApprovalWait {
+		wait = maxApprovalWait
+	}
+	margin := wait / 10
+	if margin > 500*time.Millisecond {
+		margin = 500 * time.Millisecond
+	}
+	deadline := time.Now().Add(wait - margin)
+	if dl, ok := ctx.Deadline(); ok && dl.Add(-margin).Before(deadline) {
+		deadline = dl.Add(-margin)
+	}
 	for {
 		a, err := s.st.GetApproval(ctx, req.ID)
 		if err != nil {
 			return ipc.Response{Error: "approval"}
 		}
-		if a.Status != "pending" || time.Now().After(a.ExpiresAt) || time.Now().After(deadline) {
+		if a.Status == "pending" && !time.Now().Before(a.ExpiresAt) {
+			if err := s.st.ExpireApproval(ctx, a.ID); err != nil {
+				return ipc.Response{Error: "approval"}
+			}
+			continue
+		}
+		if a.Status != "pending" || !time.Now().Before(deadline) {
 			return dataOK(a)
 		}
 		select {
@@ -326,17 +382,24 @@ func mustJSON(v any) json.RawMessage {
 	return b
 }
 
-func parseSince(s string, now time.Time) time.Time {
+// parseSince reads a window start: "" for all time, "7d" days, a Go
+// duration such as "36h", or an RFC3339 time.
+func parseSince(s string, now time.Time) (time.Time, error) {
 	if s == "" {
-		return time.Time{}
+		return time.Time{}, nil
 	}
-	if d, err := time.ParseDuration(s); err == nil {
-		return now.Add(-d)
+	if n, ok := strings.CutSuffix(s, "d"); ok {
+		if days, err := strconv.Atoi(n); err == nil && days >= 0 {
+			return now.AddDate(0, 0, -days), nil
+		}
+	}
+	if d, err := time.ParseDuration(s); err == nil && d >= 0 {
+		return now.Add(-d), nil
 	}
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t
+		return t, nil
 	}
-	return time.Time{}
+	return time.Time{}, errors.New("since: want 7d, a duration like 36h, or an RFC3339 time")
 }
 
 type modeError string

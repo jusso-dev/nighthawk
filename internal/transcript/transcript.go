@@ -7,13 +7,31 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strconv"
+	"time"
 )
 
+// Usage is token use read from one transcript line.
+type Usage struct {
+	Model      string
+	Input      int64
+	Output     int64
+	CacheRead  int64
+	CacheWrite int64
+	// Key dedupes repeated lines for the same API response.
+	Key string
+	// TS is the line timestamp, zero when the line has none.
+	TS time.Time
+}
+
 // ParseClaude extracts token usage from a Claude transcript JSONL line.
-func ParseClaude(line []byte) (model string, in, out, cacheRead, cacheWrite int64, messageKey string, ok bool) {
+// Claude Code writes one line per content block, each carrying the same
+// usage, so the key is the API message id rather than the line uuid.
+func ParseClaude(line []byte) (Usage, bool) {
 	var raw struct {
-		UUID    string `json:"uuid"`
-		Message struct {
+		UUID      string `json:"uuid"`
+		Timestamp string `json:"timestamp"`
+		Message   struct {
 			ID    string `json:"id"`
 			Model string `json:"model"`
 			Usage struct {
@@ -25,50 +43,97 @@ func ParseClaude(line []byte) (model string, in, out, cacheRead, cacheWrite int6
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(line, &raw); err != nil {
-		return "", 0, 0, 0, 0, "", false
+		return Usage{}, false
 	}
-	if raw.Message.Model == "" && raw.Message.Usage.InputTokens == 0 && raw.Message.Usage.OutputTokens == 0 &&
-		raw.Message.Usage.CacheReadInputTokens == 0 && raw.Message.Usage.CacheCreationInputTokens == 0 {
-		return "", 0, 0, 0, 0, "", false
+	u := raw.Message.Usage
+	if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadInputTokens == 0 && u.CacheCreationInputTokens == 0 {
+		return Usage{}, false
 	}
-	key := raw.UUID
+	key := raw.Message.ID
 	if key == "" {
-		key = raw.Message.ID
+		key = raw.UUID
 	}
-	return raw.Message.Model,
-		raw.Message.Usage.InputTokens,
-		raw.Message.Usage.OutputTokens,
-		raw.Message.Usage.CacheReadInputTokens,
-		raw.Message.Usage.CacheCreationInputTokens,
-		key,
-		true
+	return Usage{
+		Model: raw.Message.Model, Input: u.InputTokens, Output: u.OutputTokens,
+		CacheRead: u.CacheReadInputTokens, CacheWrite: u.CacheCreationInputTokens,
+		Key: key, TS: parseTS(raw.Timestamp),
+	}, true
 }
 
-// ParseCodex extracts token usage from a Codex transcript JSONL line.
-func ParseCodex(line []byte) (model string, in, out, cacheRead, cacheWrite int64, messageKey string, ok bool) {
+// codexTokens is a Codex token_count usage block. input_tokens includes
+// cached_input_tokens, and output_tokens includes reasoning tokens.
+type codexTokens struct {
+	InputTokens           int64 `json:"input_tokens"`
+	CachedInputTokens     int64 `json:"cached_input_tokens"`
+	CacheWriteInputTokens int64 `json:"cache_write_input_tokens"`
+	OutputTokens          int64 `json:"output_tokens"`
+	TotalTokens           int64 `json:"total_tokens"`
+}
+
+// ParseCodex extracts token usage from a Codex rollout token_count line.
+// Codex does not put the model there: callers fill it from CodexModel.
+// Key is the running session total, so a repeated token_count dedupes.
+func ParseCodex(line []byte) (Usage, bool) {
 	var raw struct {
-		Type    string `json:"type"`
-		Payload struct {
+		Type      string `json:"type"`
+		Timestamp string `json:"timestamp"`
+		Payload   struct {
 			Type string `json:"type"`
-			Info struct {
-				Model          string `json:"model"`
-				LastTokenUsage struct {
-					InputTokens              int64 `json:"input_tokens"`
-					OutputTokens             int64 `json:"output_tokens"`
-					CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-					CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-				} `json:"last_token_usage"`
+			Info *struct {
+				Model           string      `json:"model"`
+				TotalTokenUsage codexTokens `json:"total_token_usage"`
+				LastTokenUsage  codexTokens `json:"last_token_usage"`
 			} `json:"info"`
 		} `json:"payload"`
 	}
 	if err := json.Unmarshal(line, &raw); err != nil {
-		return "", 0, 0, 0, 0, "", false
+		return Usage{}, false
 	}
-	if raw.Type != "event_msg" || raw.Payload.Type != "token_count" {
-		return "", 0, 0, 0, 0, "", false
+	if raw.Type != "event_msg" || raw.Payload.Type != "token_count" || raw.Payload.Info == nil {
+		return Usage{}, false
 	}
 	u := raw.Payload.Info.LastTokenUsage
-	return raw.Payload.Info.Model, u.InputTokens, u.OutputTokens, u.CacheReadInputTokens, u.CacheCreationInputTokens, "", true
+	if u.InputTokens == 0 && u.OutputTokens == 0 {
+		return Usage{}, false
+	}
+	in := u.InputTokens - u.CachedInputTokens
+	if in < 0 {
+		in = 0
+	}
+	var key string
+	if tot := raw.Payload.Info.TotalTokenUsage.TotalTokens; tot > 0 {
+		key = "total:" + strconv.FormatInt(tot, 10)
+	}
+	return Usage{
+		Model: raw.Payload.Info.Model, Input: in, Output: u.OutputTokens,
+		CacheRead: u.CachedInputTokens, CacheWrite: u.CacheWriteInputTokens,
+		Key: key, TS: parseTS(raw.Timestamp),
+	}, true
+}
+
+// CodexModel returns the model named by a Codex turn_context or session_meta line.
+func CodexModel(line []byte) (string, bool) {
+	var raw struct {
+		Type    string `json:"type"`
+		Payload struct {
+			Model string `json:"model"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(line, &raw); err != nil {
+		return "", false
+	}
+	if (raw.Type != "turn_context" && raw.Type != "session_meta") || raw.Payload.Model == "" {
+		return "", false
+	}
+	return raw.Payload.Model, true
+}
+
+func parseTS(s string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 // ReadNew reads complete lines from path starting at off.
