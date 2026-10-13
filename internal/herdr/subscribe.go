@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
 	"net"
 	"time"
 )
@@ -29,6 +32,9 @@ func Subscribe(ctx context.Context, socketPath string, subs []Subscription, resy
 			if err == nil {
 				return
 			}
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("nighthawk: herdr subscribe: %v; retry in %s", err, delay)
+			}
 			t := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
@@ -51,6 +57,9 @@ func streamOnce(ctx context.Context, socketPath string, subs []Subscription, out
 		return err
 	}
 	defer conn.Close()
+	// Unblock the read loop on cancel; otherwise a quiet stream never returns.
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
 	req := map[string]any{
 		"id":     "nh-sub",
 		"method": "events.subscribe",
@@ -70,11 +79,14 @@ func streamOnce(ctx context.Context, socketPath string, subs []Subscription, out
 		line := sc.Bytes()
 		var probe struct {
 			Result json.RawMessage `json:"result"`
-			Error  json.RawMessage `json:"error"`
+			Error  *ErrorBody      `json:"error"`
 			Event  string          `json:"event"`
 		}
 		if err := json.Unmarshal(line, &probe); err != nil {
 			continue
+		}
+		if probe.Error != nil {
+			return fmt.Errorf("herdr events.subscribe: %w", probe.Error)
 		}
 		if probe.Event == "" {
 			continue
@@ -89,6 +101,9 @@ func streamOnce(ctx context.Context, socketPath string, subs []Subscription, out
 			return ctx.Err()
 		case out <- env:
 		}
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if err := sc.Err(); err != nil {
 		return err

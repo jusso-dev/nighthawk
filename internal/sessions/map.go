@@ -41,6 +41,7 @@ func (m *Map) Apply(env herdr.Envelope, now time.Time) {
 		Cwd            string `json:"cwd"`
 		Status         string `json:"status"`
 		AgentStatus    string `json:"agent_status"`
+		FinalStatus    string `json:"final_status"`
 	}
 	_ = json.Unmarshal(env.Data, &data)
 	if data.PaneID == "" {
@@ -68,6 +69,15 @@ func (m *Map) Apply(env herdr.Envelope, now time.Time) {
 		p.Status = data.Status
 	}
 	switch env.Event {
+	case "pane.agent_detected", "pane_agent_detected":
+		// agent is null when the pane's agent is released.
+		if data.Agent == "" {
+			p.Agent = "unknown"
+		}
+		if data.FinalStatus != "" {
+			p.Status = data.FinalStatus
+		}
+		p.Ended = time.Time{}
 	case "pane.closed", "pane.exited", "pane_closed", "pane_exited":
 		p.Ended = now
 		if p.Status == "" {
@@ -102,10 +112,13 @@ func (m *Map) Reconcile(agents []herdr.AgentInfo, now time.Time) {
 		seen[a.PaneID] = true
 		p := m.ensure(a.PaneID, now)
 		p.Agent = a.Agent
+		if p.Agent == "" {
+			p.Agent = "unknown"
+		}
 		p.Status = a.Status
 		p.Cwd = a.Cwd
 		p.Workspace = a.WorkspaceID
-		p.AgentSessionID = a.AgentSessionID
+		p.AgentSessionID = a.SessionID()
 		p.Ended = time.Time{}
 	}
 	for id, p := range m.panes {

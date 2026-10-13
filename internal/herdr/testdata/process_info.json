@@ -1,0 +1,1 @@
+{"id":"cli:pane:process_info","result":{"type":"pane_process_info","process_info":{"foreground_process_group_id":11,"foreground_processes":[{"argv":["claude"],"argv0":"claude","cmdline":"claude","cwd":"/work/repo","name":"claude","pid":11}],"pane_id":"w1:p1","shell_pid":10}}}

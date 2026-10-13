@@ -11,11 +11,12 @@ import (
 
 // InterruptKeys are the keys sent to pause an agent.
 // Checked 2026-10-13: Claude Code treats Escape as an interrupt, Codex treats Ctrl-C as an interrupt.
+// Key names are Herdr 0.9.3 logical keys (`herdr --skill`: esc, ctrl+c).
 var InterruptKeys = map[string][]string{
-	"claude":  {"Escape"},
-	"codex":   {"C-c"},
-	"grok":    {"C-c"},
-	"default": {"C-c"},
+	"claude":  {"esc"},
+	"codex":   {"ctrl+c"},
+	"grok":    {"ctrl+c"},
+	"default": {"ctrl+c"},
 }
 
 // KeysFor returns the interrupt sequence for an agent.

@@ -56,8 +56,11 @@ func (s *Server) prepare(ev event.Event) event.Event {
 	}
 	if ev.PaneID != "" {
 		p := s.sessions.Get(ev.PaneID)
-		if (ev.Agent == "" || ev.Agent == "unknown") && p.Agent != "" && p.Agent != "unknown" {
-			ev.Agent = p.Agent
+		if ev.Agent == "" || ev.Agent == "unknown" {
+			ev.Agent = "unknown"
+			if p.Agent != "" {
+				ev.Agent = p.Agent
+			}
 		}
 		if ev.SessionID == "" {
 			ev.SessionID = p.AgentSessionID
@@ -146,7 +149,7 @@ func (s *Server) finish(ctx context.Context, ev event.Event, dec policy.Decision
 	}
 	if s.opt.Alert != nil && dec.Action != policy.Allow {
 		rule, pane := dec.RuleID, ev.PaneID
-		go s.opt.Alert(rule, pane, rule)
+		go s.opt.Alert(rule, pane, dec.Reason)
 	}
 	return dec, approval
 }
