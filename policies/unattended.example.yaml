@@ -1,0 +1,25 @@
+# Example default unattended ruleset. The real one ships in M2.
+version: 1
+mode: unattended
+default: block
+rules:
+  - id: nh.cmd.curl-pipe-shell
+    severity: critical
+    match: { kind: command, command_regex: '(curl|wget)[^|]*\|\s*(ba|z)?sh' }
+    action: block
+  - id: nh.cmd.rm-rf
+    severity: critical
+    match: { kind: command, command_regex: 'rm\s+-[a-z]*r[a-z]*f' }
+    action: block
+  - id: nh.git.force-push
+    severity: high
+    match: { kind: command, command_regex: 'git\s+push\s+.*(--force|-f\b)' }
+    action: ask_human
+  - id: nh.secret.read
+    severity: critical
+    match: { kind: tool_call, path_glob: ['**/.env', '**/.ssh/**', '**/.aws/credentials'] }
+    action: block
+  - id: nh.net.unknown-host
+    severity: high
+    match: { kind: network, host_not_in: allowlist }
+    action: block

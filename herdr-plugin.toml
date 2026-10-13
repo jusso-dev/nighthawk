@@ -1,0 +1,70 @@
+# Nighthawk: agent observability and protection for Herdr.
+# Plugin system as documented for Herdr 0.9.3 (plugin v1). Reference:
+# jusso-dev/herdr-sched-cluster. Herdr substitutes nothing into argv, so the
+# scripts read HERDR_PANE_ID and HERDR_BIN_PATH from the environment.
+id = "nighthawk"
+name = "Nighthawk"
+version = "0.0.1"
+min_herdr_version = "0.9.3"
+description = "Watches every agent in Herdr: tokens, MCP calls, network, skills, commands, and blocks malicious actions when unattended"
+platforms = ["macos", "linux"]
+
+[[build]]
+id = "binary"
+command = ["./scripts/build.sh"]
+
+# One-shot: starts the daemon, which detaches. Herdr has no shutdown hook.
+[[startup]]
+id = "daemon"
+command = ["./scripts/start.sh"]
+
+[[actions]]
+id = "stop"
+title = "Stop the Nighthawk daemon"
+contexts = ["workspace"]
+command = ["./scripts/stop.sh"]
+
+[[actions]]
+id = "setup-agents"
+title = "Install Nighthawk hooks and MCP proxy into Claude Code, Codex and Grok Build"
+contexts = ["workspace"]
+command = ["./scripts/setup-agents.sh"]
+
+[[actions]]
+id = "unattended-on"
+title = "Nighthawk: enter unattended mode (fail closed)"
+contexts = ["workspace"]
+command = ["./scripts/mode.sh", "unattended"]
+
+[[actions]]
+id = "unattended-off"
+title = "Nighthawk: return to attended mode"
+contexts = ["workspace"]
+command = ["./scripts/mode.sh", "attended"]
+
+[[actions]]
+id = "dashboard"
+title = "Open the Nighthawk dashboard"
+contexts = ["workspace"]
+command = ["./scripts/open-pane.sh", "dashboard"]
+
+[[panes]]
+id = "dashboard"
+title = "Nighthawk"
+description = "Live agents, spend, MCP and network calls, blocked actions and pending approvals"
+placement = "popup"
+width = "90%"
+height = "85%"
+command = ["./bin/nighthawk", "tui"]
+
+[[events]]
+on = "pane.created"
+command = ["./scripts/on-pane-event.sh", "created"]
+
+[[events]]
+on = "pane.exited"
+command = ["./scripts/on-pane-event.sh", "exited"]
+
+[[events]]
+on = "pane.closed"
+command = ["./scripts/on-pane-event.sh", "closed"]
