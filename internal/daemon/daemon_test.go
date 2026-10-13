@@ -18,6 +18,9 @@ func TestDaemonDecideAndLock(t *testing.T) {
 	t.Setenv("HERDR_BIN_PATH", "")
 	t.Setenv("HERDR_SOCKET_PATH", "")
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil { // as if a script made it under umask 022
+		t.Fatal(err)
+	}
 	cfg := config.Default()
 	cfg.Egress.Port = 0
 	ctx, cancel := context.WithCancel(context.Background())
@@ -26,6 +29,11 @@ func TestDaemonDecideAndLock(t *testing.T) {
 	go func() { errCh <- Run(ctx, Options{StateDir: dir, Config: cfg}) }()
 	sock := config.SocketPath(dir)
 	waitSock(t, sock)
+	if st, err := os.Stat(dir); err != nil {
+		t.Fatal(err)
+	} else if st.Mode().Perm() != 0o700 {
+		t.Fatalf("state dir mode %o", st.Mode().Perm())
+	}
 	resp, err := ipc.Call(context.Background(), sock, ipc.Request{Op: "ping"})
 	if err != nil || !resp.OK {
 		t.Fatal(err, resp)

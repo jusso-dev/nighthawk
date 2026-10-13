@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/jusso-dev/nighthawk/internal/audit"
@@ -115,16 +117,25 @@ func (s *Server) eval(ev event.Event) policy.Decision {
 func (s *Server) finish(ctx context.Context, ev event.Event, dec policy.Decision) (policy.Decision, string) {
 	stored := ev
 	stored.Attrs = redactMap(ev.Attrs)
+	// The decision ctx may already be past its deadline (that is how a timeout
+	// gets here). Persist on a detached ctx so timed-out decisions are recorded.
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
 	var approval string
 	if dec.Action == policy.AskHuman {
 		approval = event.NewID()
 		raw, _ := json.Marshal(stored)
-		_ = s.st.InsertApproval(ctx, store.Approval{
+		if err := s.st.InsertApproval(pctx, store.Approval{
 			ID: approval, EventID: ev.ID, RuleID: dec.RuleID, Status: "pending",
 			ExpiresAt: time.Now().Add(10 * time.Minute), EventJSON: string(raw),
-		})
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "nighthawk: approval for event %s: %v\n", ev.ID, err)
+			approval = ""
+		}
 	}
-	_ = s.record(ctx, stored, dec)
+	if err := s.record(pctx, stored, dec); err != nil {
+		fmt.Fprintf(os.Stderr, "nighthawk: record event %s: %v\n", ev.ID, err)
+	}
 	s.enqueueSIEM(stored, dec)
 	if dec.Action == policy.PausePane || dec.Action == policy.KillSession {
 		ectx := s.run
@@ -140,12 +151,30 @@ func (s *Server) finish(ctx context.Context, ev event.Event, dec policy.Decision
 	return dec, approval
 }
 
+// record stores the event and decision and appends an audit row whose payload
+// is the full redacted event plus the full decision, so editing either table
+// no longer matches the chain.
 func (s *Server) record(ctx context.Context, ev event.Event, dec policy.Decision) error {
 	return s.st.Record(ctx, ev, dec, func(tx *sql.Tx) error {
-		payload, err := audit.Canonical(map[string]string{
-			"event_id": ev.ID,
-			"action":   string(dec.Action),
-			"rule_id":  dec.RuleID,
+		payload, err := audit.Canonical(map[string]any{
+			"event": map[string]any{
+				"id":      ev.ID,
+				"kind":    string(ev.Kind),
+				"source":  string(ev.Source),
+				"machine": ev.Machine,
+				"agent":   ev.Agent,
+				"pane":    ev.PaneID,
+				"session": ev.SessionID,
+				"task":    ev.TaskID,
+				"pre":     ev.Pre,
+				"time":    ev.Time.UnixMilli(),
+				"attrs":   ev.Attrs,
+			},
+			"decision": map[string]string{
+				"action":  string(dec.Action),
+				"rule_id": dec.RuleID,
+				"reason":  dec.Reason,
+			},
 		})
 		if err != nil {
 			return err

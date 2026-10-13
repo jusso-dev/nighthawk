@@ -2,12 +2,28 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jusso-dev/nighthawk/internal/config"
 	"github.com/jusso-dev/nighthawk/internal/policy"
 )
+
+func TestHookOfflineUsesModeDefault(t *testing.T) {
+	t.Setenv("NIGHTHAWK_STATE_DIR", t.TempDir())
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	t.Setenv("NIGHTHAWK_CONFIG", p)
+	if err := os.WriteFile(p, []byte("mode_default: unattended\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := strings.NewReader(`{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"Bash","tool_input":{"command":"ls"}}`)
+	var out, errOut bytes.Buffer
+	if code := run([]string{"hook", "claude"}, in, &out, &errOut); code != 0 || !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
+		t.Fatalf("code %d out %q err %q", code, out.String(), errOut.String())
+	}
+}
 
 func TestHookBadInputFailsClosedUnattended(t *testing.T) {
 	dir := t.TempDir()

@@ -2,7 +2,9 @@
 
 File: `$NIGHTHAWK_CONFIG`, else `$XDG_CONFIG_HOME/nighthawk/config.yaml`, else `~/.config/nighthawk/config.yaml`.
 
-A missing file loads the defaults below. Unknown keys fail with a line number. Values that start with `env:NAME` are read from the environment at load. `nighthawk config print` masks secret fields.
+A missing file loads the defaults below. Unknown keys fail with a line number. Values that start with `env:NAME` are read from the environment at load; an unset variable is an error. Load also rejects an unknown `mode_default`, a non-positive `decision_timeout` or `anchor.interval`, an out-of-range `egress.port`, and `redact.extra` patterns that do not compile. `nighthawk config check` and `nighthawk daemon` print the reason. `nighthawk config print` masks secret fields.
+
+When the `mode` file is missing or holds anything but `attended` or `unattended`, the daemon and the offline hook use `mode_default`.
 
 ```yaml
 mode_default: attended          # attended or unattended
@@ -57,7 +59,7 @@ mcp_http:
 linux_egress: false             # nftables redirect. Apply only as root on Linux.
 ```
 
-State directory: `$NIGHTHAWK_STATE_DIR`, else `$XDG_STATE_HOME/nighthawk`, else `~/.local/state/nighthawk`.
+State directory: `$NIGHTHAWK_STATE_DIR`, else `$XDG_STATE_HOME/nighthawk`, else `~/.local/state/nighthawk`. The daemon and `scripts/start.sh` force it to 0700; `daemon.log` and `watchdog.log` are 0600.
 
 | Path | Mode | Contents |
 | --- | --- | --- |

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -37,7 +38,7 @@ func cmdDaemon(args []string, out, errOut io.Writer) int {
 	}
 	cfg, err := loadCfg()
 	if err != nil {
-		fmt.Fprintln(errOut, "nighthawk: config")
+		fmt.Fprintln(errOut, "nighthawk: config:", err)
 		return 1
 	}
 	state := resolveState(*dir)
@@ -98,17 +99,20 @@ func cmdMode(args []string, out, errOut io.Writer) int {
 			return usage(errOut, "usage: nighthawk mode set <attended|unattended>")
 		}
 		mode := policy.Mode(args[1])
+		if mode != policy.Attended && mode != policy.Unattended {
+			return usage(errOut, "usage: nighthawk mode set <attended|unattended>")
+		}
 		resp, err := daemonCall(ctx, state, ipc.Request{Op: "mode.set", Mode: mode})
 		if err != nil {
 			if err := config.WriteMode(state, mode); err != nil {
-				fmt.Fprintln(errOut, "nighthawk: mode")
+				fmt.Fprintln(errOut, "nighthawk: mode:", err)
 				return 1
 			}
 			fmt.Fprintln(out, mode)
 			return 0
 		}
 		if !resp.OK {
-			fmt.Fprintln(errOut, "nighthawk: mode")
+			fmt.Fprintln(errOut, "nighthawk: mode:", resp.Error)
 			return 1
 		}
 		fmt.Fprintln(out, resp.Mode)
@@ -170,13 +174,22 @@ func cmdAudit(args []string, out, errOut io.Writer) int {
 		fs.SetOutput(errOut)
 		fromFlag := fs.Uint64("from", 0, "first seq")
 		anchors := fs.Bool("anchors", false, "also check stored anchors")
+		fs.Usage = func() {
+			fmt.Fprintln(errOut, "usage: nighthawk audit verify [--from SEQ] [--anchors]")
+			fmt.Fprintln(errOut, "exit: 0 ok, 1 read error, 2 usage, 3 chain or anchor broken")
+			fs.PrintDefaults()
+		}
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
 		}
 		from = *fromFlag
-		if _, err := au.VerifyDB(from); err != nil {
-			fmt.Fprintln(errOut, "nighthawk: audit chain broken")
-			return 3
+		if seq, err := au.VerifyDB(from); err != nil {
+			if errors.Is(err, audit.ErrBroken) {
+				fmt.Fprintf(errOut, "nighthawk: audit chain broken at seq %d\n", seq)
+				return 3
+			}
+			fmt.Fprintln(errOut, "nighthawk: audit read:", err)
+			return 1
 		}
 		if *anchors {
 			list, err := st.ListAnchors(context.Background())

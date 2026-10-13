@@ -64,6 +64,58 @@ func TestPrintRedacts(t *testing.T) {
 	}
 }
 
+func TestLoadValidates(t *testing.T) {
+	for _, body := range []string{
+		"mode_default: unatended\n",
+		"decision_timeout: -5s\n",
+		"redact:\n  extra: ['(unclosed']\n",
+		"alerts:\n  slack_webhook: env:NH_TEST_SURELY_UNSET\n",
+		"egress:\n  port: 70000\n",
+	} {
+		p := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(p); err == nil {
+			t.Errorf("accepted %q", body)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(p, []byte("mode_default: unattended\nredact:\n  extra: ['corp-[0-9]+']\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadModeDefault(t *testing.T) {
+	state := t.TempDir()
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	t.Setenv("NIGHTHAWK_CONFIG", p)
+	if ReadMode(state) != "attended" {
+		t.Fatal("no config should mean attended")
+	}
+	if err := os.WriteFile(p, []byte("mode_default: unattended\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ReadMode(state) != "unattended" {
+		t.Fatal("missing mode file must use mode_default")
+	}
+	if err := os.WriteFile(ModePath(state), []byte("garbage\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ReadMode(state) != "unattended" {
+		t.Fatal("invalid mode file must use mode_default")
+	}
+	if err := WriteMode(state, "attended"); err != nil || ReadMode(state) != "attended" {
+		t.Fatal("explicit mode file wins", err)
+	}
+	if err := WriteMode(state, "unatended"); err == nil {
+		t.Fatal("WriteMode accepted a typo")
+	}
+}
+
 func TestStateDirEnv(t *testing.T) {
 	t.Setenv("NIGHTHAWK_STATE_DIR", "/tmp/nh-state")
 	if StateDir() != "/tmp/nh-state" {

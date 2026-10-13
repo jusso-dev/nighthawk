@@ -24,6 +24,7 @@ import (
 	"github.com/jusso-dev/nighthawk/internal/herdr"
 	"github.com/jusso-dev/nighthawk/internal/ipc"
 	"github.com/jusso-dev/nighthawk/internal/policy"
+	"github.com/jusso-dev/nighthawk/internal/redact"
 	"github.com/jusso-dev/nighthawk/internal/sessions"
 	"github.com/jusso-dev/nighthawk/internal/store"
 	"golang.org/x/sys/unix"
@@ -72,6 +73,10 @@ func Run(ctx context.Context, opt Options) error {
 		opt.StateDir = config.StateDir()
 	}
 	if err := os.MkdirAll(opt.StateDir, 0o700); err != nil {
+		return err
+	}
+	// MkdirAll keeps an existing dir's mode, and scripts may create it under umask 022.
+	if err := os.Chmod(opt.StateDir, 0o700); err != nil {
 		return err
 	}
 	lock, err := lockFile(filepath.Join(opt.StateDir, "daemon.lock"))
@@ -128,6 +133,9 @@ func openServer(opt Options) (*Server, error) {
 	if opt.Config.ModeDefault == "" {
 		opt.Config = config.Default()
 	}
+	if err := redact.SetExtra(opt.Config.Redact.Extra); err != nil {
+		return nil, fmt.Errorf("redact.extra: %w", err)
+	}
 	st, err := store.Open(config.DBPath(opt.StateDir))
 	if err != nil {
 		return nil, err
@@ -145,7 +153,7 @@ func openServer(opt Options) (*Server, error) {
 	host, _ := os.Hostname()
 	s := &Server{
 		opt: opt, st: st, au: audit.NewSQLStore(st.DB()), pol: pol,
-		mode: config.ReadMode(opt.StateDir), loops: detect.NewLoop(),
+		mode: config.ReadModeOr(opt.StateDir, policy.Mode(opt.Config.ModeDefault)), loops: detect.NewLoop(),
 		sessions: sessions.NewMap(), dedupe: detect.NewDeduper(),
 		prices: prices, host: host, tokens: map[string]string{}, paneToks: map[string]string{},
 		subWake: make(chan struct{}, 1),

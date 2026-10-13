@@ -3,9 +3,11 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/jusso-dev/nighthawk/internal/policy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -172,26 +174,72 @@ func Load(path string) (Config, error) {
 	if cfg.OTEL.Protocol == "" {
 		cfg.OTEL.Protocol = "http"
 	}
-	cfg.resolveSecrets()
+	if err := cfg.resolveSecrets(); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
-func (c *Config) resolveSecrets() {
-	c.Alerts.SlackWebhook = resolveEnv(c.Alerts.SlackWebhook)
-	c.Alerts.WebhookURL = resolveEnv(c.Alerts.WebhookURL)
-	c.Alerts.WebhookSecret = resolveEnv(c.Alerts.WebhookSecret)
-	c.Anchor.WebhookURL = resolveEnv(c.Anchor.WebhookURL)
-	c.Judge.APIKey = resolveEnv(c.Judge.APIKey)
-	c.Judge.Endpoint = resolveEnv(c.Judge.Endpoint)
-	c.SIEM.WebhookURL = resolveEnv(c.SIEM.WebhookURL)
-	c.OTEL.Endpoint = resolveEnv(c.OTEL.Endpoint)
+// Validate rejects values Load cannot default: unknown modes, negative
+// durations, bad ports and redact patterns that do not compile.
+func (c Config) Validate() error {
+	if m := policy.Mode(c.ModeDefault); m != policy.Attended && m != policy.Unattended {
+		return fmt.Errorf("mode_default: %q is not attended or unattended", c.ModeDefault)
+	}
+	if c.DecisionTimeout.D() <= 0 {
+		return fmt.Errorf("decision_timeout: %s must be positive", c.DecisionTimeout.D())
+	}
+	if c.Anchor.Interval.D() <= 0 {
+		return fmt.Errorf("anchor.interval: %s must be positive", c.Anchor.Interval.D())
+	}
+	if c.Egress.Port < 0 || c.Egress.Port > 65535 {
+		return fmt.Errorf("egress.port: %d out of range", c.Egress.Port)
+	}
+	for i, p := range c.Redact.Extra {
+		if _, err := regexp.Compile(p); err != nil {
+			return fmt.Errorf("redact.extra[%d]: %w", i, err)
+		}
+	}
+	return nil
 }
 
-func resolveEnv(s string) string {
-	if !strings.HasPrefix(s, "env:") {
-		return s
+func (c *Config) resolveSecrets() error {
+	for _, f := range []struct {
+		key string
+		v   *string
+	}{
+		{"alerts.slack_webhook", &c.Alerts.SlackWebhook},
+		{"alerts.webhook_url", &c.Alerts.WebhookURL},
+		{"alerts.webhook_secret", &c.Alerts.WebhookSecret},
+		{"anchor.webhook_url", &c.Anchor.WebhookURL},
+		{"judge.api_key", &c.Judge.APIKey},
+		{"judge.endpoint", &c.Judge.Endpoint},
+		{"siem.webhook_url", &c.SIEM.WebhookURL},
+		{"otel.endpoint", &c.OTEL.Endpoint},
+	} {
+		v, err := resolveEnv(*f.v)
+		if err != nil {
+			return fmt.Errorf("%s: %w", f.key, err)
+		}
+		*f.v = v
 	}
-	return os.Getenv(strings.TrimPrefix(s, "env:"))
+	return nil
+}
+
+// resolveEnv expands env:NAME. An unset variable is an error, not "".
+func resolveEnv(s string) (string, error) {
+	if !strings.HasPrefix(s, "env:") {
+		return s, nil
+	}
+	name := strings.TrimPrefix(s, "env:")
+	v, ok := os.LookupEnv(name)
+	if !ok {
+		return "", fmt.Errorf("env %s is not set", name)
+	}
+	return v, nil
 }
 
 // RedactedCopy returns cfg with secret fields masked for config print.
