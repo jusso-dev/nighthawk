@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -19,6 +19,29 @@ import (
 )
 
 func (s *Server) decide(ctx context.Context, ev event.Event) (policy.Decision, string) {
+	ev = s.prepare(ev)
+	s.noteSkill(ctx, &ev)
+	timeout := s.opt.Config.DecisionTimeout.D()
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return s.finish(ctx, ev, policy.OnError(s.currentMode(), err))
+	}
+	dec := s.eval(ev)
+	if s.opt.Judge != nil {
+		dec = s.opt.Judge(ctx, ev, dec)
+	}
+	if err := ctx.Err(); err != nil && dec.Action == policy.Allow {
+		dec = policy.OnError(s.currentMode(), err)
+	}
+	return s.finish(ctx, ev, dec)
+}
+
+// prepare copies ev and fills id, time, machine and pane session fields.
+func (s *Server) prepare(ev event.Event) event.Event {
 	ev = cloneEvent(ev)
 	if ev.ID == "" {
 		ev.ID = event.NewID()
@@ -44,24 +67,7 @@ func (s *Server) decide(ctx context.Context, ev event.Event) (policy.Decision, s
 	if ev.TaskID == "" {
 		ev.TaskID = cost.TaskID(ev.Agent, "")
 	}
-	s.noteSkill(ctx, &ev)
-	timeout := s.opt.Config.DecisionTimeout.D()
-	if timeout <= 0 {
-		timeout = 2 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return s.finish(ctx, ev, policy.OnError(s.currentMode(), err))
-	}
-	dec := s.eval(ev)
-	if s.opt.Judge != nil {
-		dec = s.opt.Judge(ctx, ev, dec)
-	}
-	if err := ctx.Err(); err != nil && dec.Action == policy.Allow {
-		dec = policy.OnError(s.currentMode(), err)
-	}
-	return s.finish(ctx, ev, dec)
+	return ev
 }
 
 // noteSkill records a skill load or invocation from an agent hook and flags
@@ -195,12 +201,21 @@ func (s *Server) spendOf(scope, id string) float64 {
 	return usd
 }
 
+// remember returns the pane's proxy token, minting a random 128-bit one on
+// first use. Tokens live in memory only; env hands out the same one again.
 func (s *Server) remember(pane string) string {
-	sum := sha256.Sum256([]byte(pane))
-	tok := hex.EncodeToString(sum[:8])
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if tok, ok := s.paneToks[pane]; ok {
+		return tok
+	}
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	tok := hex.EncodeToString(b[:])
 	s.tokens[tok] = pane
-	s.mu.Unlock()
+	s.paneToks[pane] = tok
 	return tok
 }
 

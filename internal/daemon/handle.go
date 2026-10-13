@@ -269,6 +269,9 @@ func (s *Server) env(pane string) ipc.Response {
 		return ipc.Response{Error: "pane"}
 	}
 	tok := s.remember(pane)
+	if tok == "" {
+		return ipc.Response{Error: "token"}
+	}
 	port := s.opt.Config.Egress.Port
 	if port == 0 {
 		port = 8765

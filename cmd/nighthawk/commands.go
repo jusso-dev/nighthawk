@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -319,13 +320,54 @@ func cmdEnv(args []string, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("env", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	pane := fs.String("pane", os.Getenv("HERDR_PANE_ID"), "pane id")
+	asJSON := fs.Bool("json", false, "print JSON instead of shell exports")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *pane == "" {
-		return usage(errOut, "usage: nighthawk env --pane ID")
+		return usage(errOut, "usage: nighthawk env --pane ID [--json]")
 	}
-	return printOp(out, errOut, ipc.Request{Op: "env", Pane: *pane})
+	req := ipc.Request{Op: "env", Pane: *pane}
+	if *asJSON {
+		return printOp(out, errOut, req)
+	}
+	ctx, cancel := callCtx()
+	defer cancel()
+	resp, err := daemonCall(ctx, config.StateDir(), req)
+	if callFailed(errOut, resp, err) {
+		return 1
+	}
+	var vars map[string]string
+	if err := json.Unmarshal(resp.Data, &vars); err != nil {
+		fmt.Fprintln(errOut, "nighthawk: env")
+		return 1
+	}
+	writeExports(out, vars)
+	return 0
+}
+
+// writeExports prints vars as POSIX shell exports for eval. Only upper-case
+// names are exported; other keys, like pane, are metadata.
+func writeExports(out io.Writer, vars map[string]string) {
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		if isEnvName(k) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(out, "export %s='%s'\n", k, strings.ReplaceAll(vars[k], "'", `'\''`))
+	}
+}
+
+func isEnvName(k string) bool {
+	for i, c := range k {
+		if c != '_' && (c < 'A' || c > 'Z') && (i == 0 || c < '0' || c > '9') {
+			return false
+		}
+	}
+	return k != ""
 }
 
 func cmdStatus(args []string, out, errOut io.Writer) int {

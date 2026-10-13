@@ -15,10 +15,16 @@ import (
 	"github.com/jusso-dev/nighthawk/internal/policy"
 )
 
+// standaloneEgressPort differs from the daemon's default egress port so a
+// standalone proxy does not collide with a running daemon.
+const standaloneEgressPort = 8766
+
+// cmdEgress runs a proxy outside the daemon. It has no pane tokens, so it
+// accepts requests without one and never treats the proxy user as a pane id.
 func cmdEgress(args []string, errOut io.Writer) int {
 	fs := flag.NewFlagSet("egress-proxy", flag.ContinueOnError)
 	fs.SetOutput(errOut)
-	port := fs.Int("port", 0, "listen port")
+	port := fs.Int("port", standaloneEgressPort, "listen port")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -27,16 +33,15 @@ func cmdEgress(args []string, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "nighthawk: config")
 		return 1
 	}
-	if *port == 0 {
-		*port = cfg.Egress.Port
-	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *port))
 	if err != nil {
-		fmt.Fprintln(errOut, "nighthawk: listen")
+		fmt.Fprintf(errOut, "nighthawk: listen: %v\n", err)
 		return 1
 	}
+	fmt.Fprintf(errOut, "nighthawk: egress proxy on %s\n", ln.Addr())
 	state := config.StateDir()
 	var warn sync.Once
+	var logMu sync.Mutex
 	p := &egress.Proxy{
 		Allow: egress.Allow{Hosts: cfg.Egress.Allowlist, AllowPrivate: cfg.Egress.AllowPrivate},
 		Decide: func(ctx context.Context, pane, host string, port int) (policy.Decision, error) {
@@ -49,6 +54,13 @@ func cmdEgress(args []string, errOut io.Writer) int {
 				warn.Do(func() { fmt.Fprintln(errOut, "nighthawk: daemon unreachable") })
 			}
 			return d, nil
+		},
+		OnEvent: func(ev event.Event, d policy.Decision) {
+			logMu.Lock()
+			defer logMu.Unlock()
+			fmt.Fprintf(errOut, "nighthawk: egress %s %s:%s in=%s out=%s ms=%s rule=%s\n",
+				d.Action, ev.Attrs["host"], ev.Attrs["port"], ev.Attrs["bytes_in"],
+				ev.Attrs["bytes_out"], ev.Attrs["duration_ms"], d.RuleID)
 		},
 	}
 	if err := p.Serve(context.Background(), ln); err != nil {

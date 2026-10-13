@@ -58,7 +58,8 @@ type Server struct {
 	acts     *enforce.Actions
 	prices   *cost.Table
 	allow    egress.Allow
-	tokens   map[string]string
+	tokens   map[string]string // proxy token -> pane
+	paneToks map[string]string // pane -> proxy token
 	host     string
 	run      context.Context
 	subWake  chan struct{}
@@ -93,9 +94,11 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.ListenEgress && opt.Config.Egress.Port > 0 {
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", opt.Config.Egress.Port))
 		if err != nil {
-			return err
+			// Hooks and IPC still work without the proxy. Do not take them down.
+			fmt.Fprintf(os.Stderr, "nighthawk: egress proxy disabled: %v\n", err)
+		} else {
+			go s.proxy().Serve(ctx, ln)
 		}
-		go s.proxy().Serve(ctx, ln)
 	}
 	s.run = ctx
 	go s.follow(ctx)
@@ -144,7 +147,7 @@ func openServer(opt Options) (*Server, error) {
 		opt: opt, st: st, au: audit.NewSQLStore(st.DB()), pol: pol,
 		mode: config.ReadMode(opt.StateDir), loops: detect.NewLoop(),
 		sessions: sessions.NewMap(), dedupe: detect.NewDeduper(),
-		prices: prices, host: host, tokens: map[string]string{},
+		prices: prices, host: host, tokens: map[string]string{}, paneToks: map[string]string{},
 		subWake: make(chan struct{}, 1),
 		allow:   egress.Allow{Hosts: opt.Config.Egress.Allowlist, AllowPrivate: opt.Config.Egress.AllowPrivate},
 	}
@@ -188,6 +191,13 @@ func (s *Server) proxy() *egress.Proxy {
 			})
 			return d, nil
 		},
-		OnEvent: func(ev event.Event) { _, _ = s.decide(context.Background(), ev) },
+		OnEvent: s.noteNetwork,
 	}
+}
+
+// noteNetwork records a finished proxy connection with the decision the gate
+// already made. Policy is not evaluated again, so loop rules count one
+// connection once.
+func (s *Server) noteNetwork(ev event.Event, d policy.Decision) {
+	_, _ = s.finish(context.Background(), s.prepare(ev), d)
 }
