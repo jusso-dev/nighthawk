@@ -89,3 +89,37 @@ func TestAuditAnchorAndMismatch(t *testing.T) {
 		t.Fatalf("tamper code %d err %q", code, errOut.String())
 	}
 }
+
+func TestAuditVerifyReportsBrokenSeq(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("NIGHTHAWK_STATE_DIR", state)
+	t.Setenv("NIGHTHAWK_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
+	st, err := store.Open(config.DBPath(state))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := st.DB().Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{`{"n":1}`, `{"n":2}`, `{"n":3}`} {
+		if _, err := audit.NewSQLStore(st.DB()).Append(tx, []byte(p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{`DROP TRIGGER audit_no_update`, `UPDATE audit SET payload = '{"n":9}' WHERE seq = 2`} {
+		if _, err := st.DB().Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := run([]string{"audit", "verify"}, nil, &out, &errOut); code != 3 || !strings.Contains(errOut.String(), "broken at seq 2") {
+		t.Fatalf("code %d err %q", code, errOut.String())
+	}
+}

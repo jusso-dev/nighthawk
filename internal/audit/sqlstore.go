@@ -63,8 +63,12 @@ func (s *SQLStore) VerifyDB(from uint64) (uint64, error) {
 	}
 	prev := Genesis
 	if from > 1 {
-		if err := s.db.QueryRow(`SELECT hash FROM audit WHERE seq = ?`, from-1).Scan(&prev); err != nil {
+		err := s.db.QueryRow(`SELECT hash FROM audit WHERE seq = ?`, from-1).Scan(&prev)
+		switch {
+		case err == sql.ErrNoRows:
 			return from, fmt.Errorf("%w at seq %d", ErrBroken, from)
+		case err != nil:
+			return 0, err
 		}
 	}
 	rows, err := s.db.Query(`SELECT seq, payload, prev_hash, hash FROM audit WHERE seq >= ? ORDER BY seq`, from)
@@ -72,10 +76,12 @@ func (s *SQLStore) VerifyDB(from uint64) (uint64, error) {
 		return 0, err
 	}
 	defer rows.Close()
-	return verifyFrom(prev, func(yield func(Record) bool) {
+	var scanErr error
+	broken, verr := verifyFrom(prev, func(yield func(Record) bool) {
 		for rows.Next() {
 			var r Record
 			if err := rows.Scan(&r.Seq, &r.Payload, &r.PrevHash, &r.Hash); err != nil {
+				scanErr = err
 				return
 			}
 			if !yield(r) {
@@ -83,6 +89,16 @@ func (s *SQLStore) VerifyDB(from uint64) (uint64, error) {
 			}
 		}
 	})
+	if verr != nil {
+		return broken, verr
+	}
+	if scanErr != nil {
+		return 0, scanErr
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return 0, nil
 }
 
 // VerifyStream checks a sequence that starts at genesis.

@@ -12,6 +12,7 @@ import (
 	"github.com/jusso-dev/nighthawk/internal/config"
 	"github.com/jusso-dev/nighthawk/internal/cost"
 	"github.com/jusso-dev/nighthawk/internal/policy"
+	"github.com/jusso-dev/nighthawk/internal/redact"
 )
 
 func cmdHook(args []string, in io.Reader, out, errOut io.Writer) int {
@@ -24,6 +25,9 @@ func cmdHook(args []string, in io.Reader, out, errOut io.Writer) int {
 		return 2
 	}
 	state := config.StateDir()
+	if cfg, err := loadCfg(); err == nil {
+		_ = redact.SetExtra(cfg.Redact.Extra) // Load already compiled these.
+	}
 	// Claude Code treats exit 1 as non-blocking, so input we cannot check
 	// must still deny when nobody is watching.
 	reject := func(msg string) int {
