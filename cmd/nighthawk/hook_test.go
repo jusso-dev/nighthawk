@@ -2,12 +2,91 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jusso-dev/nighthawk/internal/config"
+	"github.com/jusso-dev/nighthawk/internal/ipc"
 	"github.com/jusso-dev/nighthawk/internal/policy"
 )
+
+type fakeDaemon struct {
+	mu     sync.Mutex
+	status string
+}
+
+func (f *fakeDaemon) set(s string) { f.mu.Lock(); f.status = s; f.mu.Unlock() }
+
+func (f *fakeDaemon) get() string { f.mu.Lock(); defer f.mu.Unlock(); return f.status }
+
+func (f *fakeDaemon) Handle(_ context.Context, req ipc.Request) ipc.Response {
+	switch req.Op {
+	case "decide":
+		dec := policy.Decision{Action: policy.AskHuman, RuleID: "nh.test.ask"}
+		return ipc.Response{OK: true, Decision: &dec, Data: json.RawMessage(`{"approval_id":"a1"}`)}
+	case "approval.wait":
+		return ipc.Response{OK: true, Data: json.RawMessage(`{"ID":"a1","Status":"` + f.get() + `"}`)}
+	case "approval.expire":
+		f.set("expired")
+	}
+	return ipc.Response{OK: true}
+}
+
+func TestHookWaitsForApproval(t *testing.T) {
+	dir, err := os.MkdirTemp("", "nh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	t.Setenv("NIGHTHAWK_STATE_DIR", dir)
+	t.Setenv("NIGHTHAWK_APPROVAL_WAIT", "200ms")
+	fake := &fakeDaemon{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = ipc.Serve(ctx, config.SocketPath(dir), fake) }()
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(config.SocketPath(dir)); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}`
+	for _, tc := range []struct {
+		status string
+		deny   bool
+	}{{"approved", false}, {"denied", true}, {"pending", true}} {
+		fake.set(tc.status)
+		var out, errOut bytes.Buffer
+		if code := run([]string{"hook", "claude"}, strings.NewReader(in), &out, &errOut); code != 0 {
+			t.Fatalf("%s: code %d %s", tc.status, code, errOut.String())
+		}
+		if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != tc.deny {
+			t.Fatalf("%s: out %q", tc.status, out.String())
+		}
+	}
+	if got := fake.get(); got != "expired" {
+		t.Fatalf("timed out approval not expired: %s", got)
+	}
+}
+
+// Codex passes the notify payload as the last argument, not on stdin.
+func TestHookCodexNotifyArgv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("NIGHTHAWK_STATE_DIR", dir)
+	if err := config.WriteMode(dir, policy.Attended); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	payload := `{"type":"agent-turn-complete","thread-id":"th-1","cwd":"/w"}`
+	if code := run([]string{"hook", "codex", payload}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("code %d %s", code, errOut.String())
+	}
+}
 
 func TestHookBadInputFailsClosedUnattended(t *testing.T) {
 	dir := t.TempDir()

@@ -62,6 +62,8 @@ type Server struct {
 	host     string
 	run      context.Context
 	subWake  chan struct{}
+	trMu     sync.Mutex
+	trs      map[string]*transcriptTail
 }
 
 // Run holds the flock, serves the socket, and returns when ctx ends.

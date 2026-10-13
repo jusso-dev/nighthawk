@@ -292,16 +292,23 @@ func (s *Store) ListEvents(ctx context.Context, f Filter) ([]event.Event, error)
 	return out, rows.Err()
 }
 
-// UsageTotals is grouped token usage.
+// UsageTotals is grouped token usage for one key, model and UTC day.
+// At is the latest row time in the group, so callers can price by date.
 type UsageTotals struct {
 	Key        string
 	Model      string
+	At         time.Time
 	Input      int64
 	Output     int64
 	CacheRead  int64
 	CacheWrite int64
 }
 
+// dayExpr is the UTC date of a usage row.
+const dayExpr = `strftime('%Y-%m-%d', ts / 1000, 'unixepoch')`
+
+// UsageGrouped sums usage since a time by agent, session, task, model or day.
+// Rows are also split by UTC day so each part can be priced at its own date.
 func (s *Store) UsageGrouped(ctx context.Context, by string, since time.Time) ([]UsageTotals, error) {
 	col := "model"
 	switch by {
@@ -311,13 +318,15 @@ func (s *Store) UsageGrouped(ctx context.Context, by string, since time.Time) ([
 		col = "session_id"
 	case "task":
 		col = "task_id"
+	case "day":
+		col = dayExpr
 	case "model":
 		col = "model"
 	default:
 		col = "model"
 	}
-	q := `SELECT ` + col + `, model, SUM(input_tokens), SUM(output_tokens), SUM(cache_read), SUM(cache_write)
-		FROM usage WHERE ts >= ? GROUP BY ` + col + `, model ORDER BY ` + col + `, model`
+	q := `SELECT COALESCE(` + col + `, ''), COALESCE(model, ''), MAX(ts), SUM(input_tokens), SUM(output_tokens), SUM(cache_read), SUM(cache_write)
+		FROM usage WHERE ts >= ? GROUP BY 1, 2, ` + dayExpr + ` ORDER BY 1, 2, 3`
 	rows, err := s.db.QueryContext(ctx, q, since.UnixMilli())
 	if err != nil {
 		return nil, err
@@ -326,9 +335,11 @@ func (s *Store) UsageGrouped(ctx context.Context, by string, since time.Time) ([
 	var out []UsageTotals
 	for rows.Next() {
 		var u UsageTotals
-		if err := rows.Scan(&u.Key, &u.Model, &u.Input, &u.Output, &u.CacheRead, &u.CacheWrite); err != nil {
+		var at int64
+		if err := rows.Scan(&u.Key, &u.Model, &at, &u.Input, &u.Output, &u.CacheRead, &u.CacheWrite); err != nil {
 			return nil, err
 		}
+		u.At = time.UnixMilli(at)
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -514,6 +525,13 @@ func (s *Store) ResolveApproval(ctx context.Context, id, status, who string) err
 		return ErrNoPendingApproval
 	}
 	return nil
+}
+
+// ExpireApproval marks a still pending approval expired. A decided one is left alone.
+func (s *Store) ExpireApproval(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE approvals SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'pending'`,
+		time.Now().UnixMilli(), id)
+	return err
 }
 
 func (s *Store) ListApprovals(ctx context.Context, status string) ([]Approval, error) {

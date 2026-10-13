@@ -174,12 +174,15 @@ func (s *Server) auditRaw(payload []byte) {
 }
 
 func (s *Server) spendOf(scope, id string) float64 {
+	// Untagged usage shares the empty key; it is nobody's budget.
+	if id == "" {
+		return 0
+	}
 	rows, err := s.st.UsageGrouped(context.Background(), scope, time.Unix(0, 0))
 	if err != nil {
 		return 0
 	}
 	var usd float64
-	now := time.Now()
 	for _, r := range rows {
 		if r.Key != id {
 			continue
@@ -187,7 +190,7 @@ func (s *Server) spendOf(scope, id string) float64 {
 		line := s.prices.Line(cost.Usage{
 			Key: r.Key, Model: r.Model, Input: r.Input, Output: r.Output,
 			CacheRead: r.CacheRead, CacheWrite: r.CacheWrite,
-		}, now, 0)
+		}, r.At, 0)
 		if !line.Unpriced {
 			usd += line.USD
 		}
