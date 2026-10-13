@@ -52,6 +52,15 @@ func TestDaemonDecideAndLock(t *testing.T) {
 	if err != nil || resp.Decision == nil || resp.Decision.Action != policy.Allow {
 		t.Fatalf("%v %+v", err, resp.Decision)
 	}
+	// doctor and spend must not hold the single store connection and stall later calls.
+	for _, op := range []string{"doctor", "spend", "skills.list", "status"} {
+		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Second)
+		resp, err = ipc.Call(cctx, sock, ipc.Request{Op: op})
+		ccancel()
+		if err != nil || !resp.OK {
+			t.Fatalf("%s: %v %s", op, err, resp.Error)
+		}
+	}
 	resp, err = ipc.Call(context.Background(), sock, ipc.Request{Op: "audit.verify"})
 	if err != nil || !resp.OK {
 		t.Fatal(err, resp.Error)

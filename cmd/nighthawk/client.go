@@ -37,6 +37,24 @@ func daemonCall(ctx context.Context, state string, req ipc.Request) (ipc.Respons
 	return ipc.Call(cctx, config.SocketPath(state), req)
 }
 
+// callFailed reports a failed daemon call. It keeps "unreachable" for
+// transport errors and shows the daemon's own error otherwise.
+func callFailed(errOut io.Writer, resp ipc.Response, err error) bool {
+	switch {
+	case err != nil:
+		fmt.Fprintln(errOut, "nighthawk: daemon unreachable")
+	case !resp.OK:
+		msg := resp.Error
+		if msg == "" {
+			msg = "request failed"
+		}
+		fmt.Fprintln(errOut, "nighthawk: "+msg)
+	default:
+		return false
+	}
+	return true
+}
+
 func decideEvent(ctx context.Context, state string, ev event.Event) policy.Decision {
 	resp, err := daemonCall(ctx, state, ipc.Request{Op: "decide", Event: &ev})
 	if err != nil || !resp.OK || resp.Decision == nil {

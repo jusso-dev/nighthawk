@@ -72,7 +72,7 @@ func cmdDaemon(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(out, "nighthawk: daemon already running")
 		return 0
 	}
-	fmt.Fprintln(errOut, "nighthawk: daemon stopped")
+	fmt.Fprintln(errOut, "nighthawk: daemon stopped:", err)
 	return 1
 }
 
@@ -284,8 +284,7 @@ func cmdSpend(args []string, out, errOut io.Writer) int {
 	ctx, cancel := callCtx()
 	defer cancel()
 	resp, err := daemonCall(ctx, config.StateDir(), ipc.Request{Op: "spend", By: *by, Since: *since})
-	if err != nil || !resp.OK {
-		fmt.Fprintln(errOut, "nighthawk: daemon unreachable")
+	if callFailed(errOut, resp, err) {
 		return 1
 	}
 	if *asJSON {
@@ -355,8 +354,7 @@ func cmdResolve(op string, args []string, out, errOut io.Writer) int {
 	ctx, cancel := callCtx()
 	defer cancel()
 	resp, err := daemonCall(ctx, config.StateDir(), ipc.Request{Op: "approval.resolve", ID: args[0], Kind: status, Who: "cli"})
-	if err != nil || !resp.OK {
-		fmt.Fprintln(errOut, "nighthawk: daemon unreachable")
+	if callFailed(errOut, resp, err) {
 		return 1
 	}
 	fmt.Fprintln(out, status)
@@ -413,8 +411,7 @@ func printOp(out, errOut io.Writer, req ipc.Request) int {
 	ctx, cancel := callCtx()
 	defer cancel()
 	resp, err := daemonCall(ctx, config.StateDir(), req)
-	if err != nil || !resp.OK {
-		fmt.Fprintln(errOut, "nighthawk: daemon unreachable")
+	if callFailed(errOut, resp, err) {
 		return 1
 	}
 	if len(resp.Data) == 0 {

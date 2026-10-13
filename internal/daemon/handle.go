@@ -277,11 +277,8 @@ func (s *Server) env(pane string) ipc.Response {
 }
 
 func (s *Server) doctor(ctx context.Context) ipc.Response {
-	rows, err := s.st.DB().QueryContext(ctx, `SELECT DISTINCT pane_id, agent FROM usage WHERE pane_id != ''`)
-	if err != nil {
-		return ipc.Response{Error: "store"}
-	}
-	defer rows.Close()
+	// The store has one connection. Finish ListEvents before opening rows,
+	// or the second query waits on the connection rows holds forever.
 	nets := map[string]bool{}
 	evs, err := s.st.ListEvents(ctx, store.Filter{Kind: event.KindNetwork})
 	if err != nil {
@@ -290,6 +287,11 @@ func (s *Server) doctor(ctx context.Context) ipc.Response {
 	for _, e := range evs {
 		nets[e.PaneID] = true
 	}
+	rows, err := s.st.DB().QueryContext(ctx, `SELECT DISTINCT pane_id, agent FROM usage WHERE pane_id != ''`)
+	if err != nil {
+		return ipc.Response{Error: "store"}
+	}
+	defer rows.Close()
 	var missing []map[string]string
 	for rows.Next() {
 		var pane, agent string

@@ -139,8 +139,7 @@ func cmdMCP(args []string, out, errOut io.Writer) int {
 	ctx, cancel := callCtx()
 	defer cancel()
 	resp, err := daemonCall(ctx, config.StateDir(), ipc.Request{Op: "pins.approve", Extra: extra, Who: "cli"})
-	if err != nil || !resp.OK {
-		fmt.Fprintln(errOut, "nighthawk: daemon unreachable")
+	if callFailed(errOut, resp, err) {
 		return 1
 	}
 	fmt.Fprintln(out, "approved")

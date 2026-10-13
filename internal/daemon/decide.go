@@ -14,6 +14,7 @@ import (
 	"github.com/jusso-dev/nighthawk/internal/policy"
 	"github.com/jusso-dev/nighthawk/internal/redact"
 	"github.com/jusso-dev/nighthawk/internal/sessions"
+	"github.com/jusso-dev/nighthawk/internal/skills"
 	"github.com/jusso-dev/nighthawk/internal/store"
 )
 
@@ -43,6 +44,7 @@ func (s *Server) decide(ctx context.Context, ev event.Event) (policy.Decision, s
 	if ev.TaskID == "" {
 		ev.TaskID = cost.TaskID(ev.Agent, "")
 	}
+	s.noteSkill(ctx, &ev)
 	timeout := s.opt.Config.DecisionTimeout.D()
 	if timeout <= 0 {
 		timeout = 2 * time.Second
@@ -60,6 +62,29 @@ func (s *Server) decide(ctx context.Context, ev event.Event) (policy.Decision, s
 		dec = policy.OnError(s.currentMode(), err)
 	}
 	return s.finish(ctx, ev, dec)
+}
+
+// noteSkill records a skill load or invocation from an agent hook and flags
+// a hash change on the event. Post hooks are skipped so one call counts once.
+func (s *Server) noteSkill(ctx context.Context, ev *event.Event) {
+	if ev.Kind != event.KindSkill || ev.Attrs == nil || ev.Attrs["change"] != "" || ev.Attrs["hook"] == "PostToolUse" {
+		return
+	}
+	name, path := ev.Attrs["name"], ev.Attrs["path"]
+	if name == "" && path != "" {
+		name = skills.NameFromPath(path)
+	}
+	if name == "" {
+		return
+	}
+	var h string
+	if path != "" {
+		h, _ = skills.FileHash(path)
+	}
+	_, changed, err := s.st.UpsertSkill(ctx, name, path, h, false)
+	if err == nil && changed {
+		ev.Attrs["change"] = "skill_changed"
+	}
 }
 
 func (s *Server) eval(ev event.Event) policy.Decision {
