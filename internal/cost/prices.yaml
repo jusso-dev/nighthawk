@@ -1,0 +1,59 @@
+# USD per 1,000,000 tokens. effective_from is the first day the rate applies.
+# Unknown models stay unpriced. They are never reported as zero dollars.
+prices:
+  - model: claude-3-5-sonnet
+    input: 3
+    output: 15
+    cache_read: 0.3
+    cache_write: 3.75
+    effective_from: 2024-10-16
+    source: https://www.anthropic.com/pricing
+  - model: claude-3-5-haiku
+    input: 0.8
+    output: 4
+    cache_read: 0.08
+    cache_write: 1
+    effective_from: 2024-10-16
+    source: https://www.anthropic.com/pricing
+  - model: claude-sonnet-4
+    input: 3
+    output: 15
+    cache_read: 0.3
+    cache_write: 3.75
+    effective_from: 2025-05-01
+    source: https://www.anthropic.com/pricing
+  - model: claude-opus-4
+    input: 15
+    output: 75
+    cache_read: 1.5
+    cache_write: 18.75
+    effective_from: 2025-05-01
+    source: https://www.anthropic.com/pricing
+  - model: gpt-4o
+    input: 2.5
+    output: 10
+    cache_read: 1.25
+    cache_write: 2.5
+    effective_from: 2024-08-06
+    source: https://openai.com/api/pricing
+  - model: gpt-4o-mini
+    input: 0.15
+    output: 0.6
+    cache_read: 0.075
+    cache_write: 0.15
+    effective_from: 2024-07-18
+    source: https://openai.com/api/pricing
+  - model: grok-2
+    input: 2
+    output: 10
+    cache_read: 0
+    cache_write: 0
+    effective_from: 2024-12-01
+    source: https://docs.x.ai/docs/models
+  - model: grok-3
+    input: 3
+    output: 15
+    cache_read: 0
+    cache_write: 0
+    effective_from: 2025-04-01
+    source: https://docs.x.ai/docs/models

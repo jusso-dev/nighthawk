@@ -1,0 +1,206 @@
+version: 1
+mode: unattended
+default: block
+rules:
+  - id: nh.cmd.curl-pipe-shell
+    severity: critical
+    why: curl or wget piped into a shell
+    match:
+      kind: command
+      command_regex: '(curl|wget)[^|;&]*\|\s*(ba|z|da|fi|k)?sh'
+    action: block
+  - id: nh.cmd.bash-process-sub
+    severity: critical
+    why: shell process substitution that downloads a script
+    match:
+      kind: command
+      command_regex: '(ba|z)?sh\s+<\s*\(\s*(curl|wget)'
+    action: block
+  - id: nh.cmd.rm-rf
+    severity: critical
+    why: recursive delete of root, home, or a parent directory
+    match:
+      kind: command
+      command_regex: 'rm\s+-[A-Za-z]*r[A-Za-z]*f[A-Za-z]*\s+(/(\s|$|\*)|~/|~(\s|$)|(\.\./))'
+    action: block
+  - id: nh.git.force-push
+    severity: high
+    why: force push rewrites remote history
+    match:
+      kind: command
+      command_regex: 'git\s+push\b.*(\s--force\b|\s--force-with-lease\b|\s-f\b)'
+    action: ask_human
+  - id: nh.git.reset-hard
+    severity: high
+    why: hard reset discards commits
+    match:
+      kind: command
+      command_regex: 'git\s+reset\s+--hard\b'
+    action: ask_human
+  - id: nh.git.remote-delete
+    severity: high
+    why: deleting a remote branch
+    match:
+      kind: command
+      command_regex: 'git\s+push\s+\S+\s+(:\S|--delete\b|-d\b)'
+    action: ask_human
+  - id: nh.sql.drop
+    severity: critical
+    why: destructive SQL
+    match:
+      kind: command
+      command_regex: '(?i)\b(drop\s+database|drop\s+table|truncate\s+(table\s+)?)\b'
+    action: block
+  - id: nh.cmd.migrate-reset
+    severity: critical
+    why: destructive migration or terraform destroy
+    match:
+      kind: command
+      command_regex: 'prisma\s+migrate\s+reset|terraform\s+destroy\b'
+    action: block
+  - id: nh.secret.command
+    severity: critical
+    why: shell read of credential files
+    match:
+      kind: command
+      command_regex: '(^|[;&|]\s*)(cat|head|tail|less|more|bat|cp|source)\s+.*(\.env|\.ssh/|\.aws/|hosts\.yml)'
+    action: block
+  - id: nh.secret.read
+    severity: critical
+    why: tool read of credential files
+    match:
+      kind: tool_call
+      path_glob:
+        - ".env"
+        - "**/.env"
+        - "**/.ssh/**"
+        - "**/.aws/**"
+        - "**/.config/gh/hosts.yml"
+        - "**/*keychain*"
+        - "**/Login Data"
+    action: block
+  - id: nh.secret.write
+    severity: critical
+    why: tool write of credential files
+    match:
+      kind: file_write
+      path_glob:
+        - ".env"
+        - "**/.env"
+        - "**/.ssh/**"
+        - "**/.aws/**"
+    action: block
+  - id: nh.self.hook-config
+    severity: critical
+    why: writes that can disable hooks or Nighthawk
+    match:
+      kind: file_write
+      path_glob:
+        - "**/.claude/settings.json"
+        - "**/.grok/settings.json"
+        - "**/.codex/config.toml"
+        - "**/.config/nighthawk/**"
+        - "**/.bashrc"
+        - "**/.zshrc"
+        - "**/.profile"
+    action: block
+  - id: nh.cmd.unset-proxy
+    severity: high
+    why: stripping the egress proxy or TLS verification
+    match:
+      kind: command
+      command_regex: 'unset\s+HTTPS_PROXY|--no-verify|sandbox_mode\s*=\s*[''"]?danger'
+    action: block
+  - id: nh.cmd.pkg-url
+    severity: high
+    why: package install from a URL
+    match:
+      kind: command
+      command_regex: '(npm|pip3?|gem|cargo)\s+install\s+https?://'
+    action: block
+  - id: nh.net.blob-exfil
+    severity: high
+    why: high-entropy payload to a host outside the allowlist
+    match:
+      kind: network
+      host_not_in: allowlist
+      command_regex: '[A-Za-z0-9+/]{40,}={0,2}'
+    action: block
+  - id: nh.net.unknown-host
+    severity: high
+    why: destination host is not on the allowlist
+    match:
+      kind: network
+      host_not_in: allowlist
+    action: block
+  - id: nh.self.pkill
+    severity: critical
+    why: agent trying to stop Nighthawk
+    match:
+      kind: command
+      command_regex: '(pkill|killall)\s+nighthawk|kill\s+[0-9]+.*nighthawk'
+    action: block
+  - id: nh.spend.session
+    severity: high
+    why: session spend is over the budget
+    match:
+      spend_over:
+        scope: session
+        usd: 20
+    action: pause_pane
+  - id: nh.loop.repeat
+    severity: high
+    why: the same call repeated inside a minute
+    match:
+      loop:
+        count: 10
+        within: 1m
+    action: pause_pane
+  - id: nh.allow.network
+    severity: info
+    why: host is on the allowlist
+    match:
+      kind: network
+    action: allow
+  - id: nh.allow.file
+    severity: info
+    why: file write matched no earlier rule
+    match:
+      kind: file_write
+    action: allow
+  - id: nh.allow.mcp
+    severity: info
+    why: mcp call matched no earlier rule
+    match:
+      kind: mcp_call
+    action: allow
+  - id: nh.allow.tool
+    severity: info
+    why: tool call matched no earlier rule
+    match:
+      kind: tool_call
+    action: allow
+  - id: nh.allow.commands
+    severity: info
+    why: command that matched no earlier rule
+    match:
+      kind: command
+    action: allow
+  - id: nh.allow.skill
+    severity: info
+    why: skill use is recorded
+    match:
+      kind: skill
+    action: allow
+  - id: nh.allow.tokens
+    severity: info
+    why: token usage is recorded
+    match:
+      kind: token_usage
+    action: allow
+  - id: nh.allow.pane
+    severity: info
+    why: pane lifecycle is recorded
+    match:
+      kind: pane
+    action: allow

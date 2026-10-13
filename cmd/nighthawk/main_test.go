@@ -9,7 +9,7 @@ import (
 
 func TestVersion(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := run([]string{"version"}, &out, &errOut); code != 0 || out.Len() == 0 {
+	if code := run([]string{"version"}, bytes.NewReader(nil), &out, &errOut); code != 0 || out.Len() == 0 {
 		t.Fatalf("code %d out %q", code, out.String())
 	}
 }
