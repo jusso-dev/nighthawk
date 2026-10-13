@@ -18,10 +18,14 @@ import (
 
 // Proxy is an HTTP and CONNECT proxy bound to one listener.
 type Proxy struct {
-	Allow   Allow
-	Decide  func(ctx context.Context, pane, host string, port int) (policy.Decision, error)
-	OnEvent func(event.Event)
-	Pane    func(token string) string
+	Allow  Allow
+	Decide func(ctx context.Context, pane, host string, port int) (policy.Decision, error)
+	// OnEvent receives each finished connection with the decision already
+	// made for it. It must not evaluate policy again.
+	OnEvent func(event.Event, policy.Decision)
+	// Pane maps a proxy token to a pane id. When set, requests with a missing
+	// or unknown token get 407. When nil, requests run with no pane.
+	Pane func(token string) string
 }
 
 // Serve accepts until ctx is cancelled.
@@ -41,7 +45,16 @@ func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
 // ServeHTTP enforces the allowlist, then tunnels or forwards.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host, port := splitHost(r)
-	pane := p.pane(r)
+	if host == "" || (r.Method != http.MethodConnect && (r.URL == nil || r.URL.Host == "")) {
+		http.Error(w, "nighthawk: not a proxy request\n", http.StatusBadRequest)
+		return
+	}
+	pane, ok := p.pane(r)
+	if !ok {
+		w.Header().Set("Proxy-Authenticate", `Basic realm="nighthawk"`)
+		http.Error(w, "nighthawk: proxy token required\n", http.StatusProxyAuthRequired)
+		return
+	}
 	dec := p.gate(r.Context(), pane, host, port)
 	if dec.Action != policy.Allow {
 		rule := dec.RuleID
@@ -59,37 +72,34 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		in, out, err = p.forward(w, r)
 	}
+	if errors.Is(err, ErrPrivate) {
+		p.emit(pane, host, port, 0, 0, time.Since(start), policy.Decision{Action: policy.Block, RuleID: "nh.net.private", Reason: "private address"})
+		return
+	}
 	if err != nil {
 		return
 	}
-	p.emit(pane, host, port, in, out, time.Since(start), dec.RuleID)
+	p.emit(pane, host, port, in, out, time.Since(start), dec)
 }
 
-func (p *Proxy) pane(r *http.Request) string {
+// pane maps the request's proxy token to a pane. Without a Pane lookup the
+// token is not trusted as a pane id and the request runs with no pane.
+func (p *Proxy) pane(r *http.Request) (string, bool) {
+	if p.Pane == nil {
+		return "", true
+	}
 	tok := PaneFromRequest(r)
-	if p.Pane == nil || tok == "" {
-		return tok
+	if tok == "" {
+		return "", false
 	}
-	if pane := p.Pane(tok); pane != "" {
-		return pane
-	}
-	return tok
+	pane := p.Pane(tok)
+	return pane, pane != ""
 }
 
-// PaneFromRequest reads the proxy URL user. That user is the pane token.
+// PaneFromRequest returns the pane token: the user in Proxy-Authorization.
+// The request URL and Authorization belong to the destination and are ignored.
 func PaneFromRequest(r *http.Request) string {
-	if r.URL != nil && r.URL.User != nil {
-		if u := r.URL.User.Username(); u != "" {
-			return u
-		}
-	}
-	if u := proxyUser(r.Header.Get("Proxy-Authorization")); u != "" {
-		return u
-	}
-	if u, _, ok := r.BasicAuth(); ok {
-		return u
-	}
-	return ""
+	return proxyUser(r.Header.Get("Proxy-Authorization"))
 }
 
 func proxyUser(h string) string {
@@ -113,7 +123,8 @@ func (p *Proxy) gate(ctx context.Context, pane, host string, port int) policy.De
 		}
 		return d
 	}
-	if p.Allow.Allows(host, port) {
+	// The private address check runs at dial time, on the address dialled.
+	if p.Allow.HostMatch(host) {
 		return policy.Decision{Action: policy.Allow, RuleID: "nh.allow.network"}
 	}
 	return policy.Decision{Action: policy.Block, RuleID: "nh.net.unknown-host"}
@@ -123,12 +134,20 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) (int64, int64, e
 	req := r.Clone(r.Context())
 	req.RequestURI = ""
 	req.Header.Del("Proxy-Authorization")
-	client := &http.Client{Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error {
+	tr := &http.Transport{Proxy: nil, DisableKeepAlives: true, DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+		h, ps, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		port, _ := strconv.Atoi(ps)
+		return p.dial(ctx, h, port)
+	}}
+	client := &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, "blocked by Nighthawk: nh.net.dial\n", http.StatusBadGateway)
+		dialFail(w, err)
 		return 0, 0, err
 	}
 	defer resp.Body.Close()
@@ -152,9 +171,9 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request, host string, port
 		http.Error(w, "blocked by Nighthawk: nh.net.dial\n", http.StatusInternalServerError)
 		return 0, 0, errors.New("hijack")
 	}
-	dest, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 10*time.Second)
+	dest, err := p.dial(r.Context(), host, port)
 	if err != nil {
-		http.Error(w, "blocked by Nighthawk: nh.net.dial\n", http.StatusBadGateway)
+		dialFail(w, err)
 		return 0, 0, err
 	}
 	conn, buf, err := hj.Hijack()
@@ -183,7 +202,34 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request, host string, port
 	return atomic.LoadInt64(&in), atomic.LoadInt64(&out), nil
 }
 
-func (p *Proxy) emit(pane, host string, port int, in, out int64, dur time.Duration, rule string) {
+// dial resolves host once, rejects private addresses, and dials the checked
+// address. This runs whatever Decide returned, so an allowlisted name that
+// resolves to loopback or link-local is still refused.
+func (p *Proxy) dial(ctx context.Context, host string, port int) (net.Conn, error) {
+	ips, err := p.Allow.Addrs(host)
+	if err != nil {
+		return nil, err
+	}
+	d := net.Dialer{Timeout: 10 * time.Second}
+	for _, ip := range ips {
+		var c net.Conn
+		c, err = d.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), strconv.Itoa(port)))
+		if err == nil {
+			return c, nil
+		}
+	}
+	return nil, err
+}
+
+func dialFail(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrPrivate) {
+		http.Error(w, "blocked by Nighthawk: nh.net.private\n", http.StatusForbidden)
+		return
+	}
+	http.Error(w, "blocked by Nighthawk: nh.net.dial\n", http.StatusBadGateway)
+}
+
+func (p *Proxy) emit(pane, host string, port int, in, out int64, dur time.Duration, dec policy.Decision) {
 	if p.OnEvent == nil {
 		return
 	}
@@ -197,9 +243,9 @@ func (p *Proxy) emit(pane, host string, port int, in, out int64, dur time.Durati
 			"bytes_in":    strconv.FormatInt(in, 10),
 			"bytes_out":   strconv.FormatInt(out, 10),
 			"duration_ms": strconv.FormatInt(dur.Milliseconds(), 10),
-			"rule":        rule,
+			"rule":        dec.RuleID,
 		},
-	})
+	}, dec)
 }
 
 func splitHost(r *http.Request) (string, int) {

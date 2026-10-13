@@ -2,9 +2,14 @@
 package egress
 
 import (
+	"errors"
 	"net"
 	"strings"
 )
+
+// ErrPrivate means a destination resolved to a private address that
+// AllowPrivate does not cover.
+var ErrPrivate = errors.New("private address")
 
 // Allow is the host allowlist. Hosts may be exact names, *.suffix, or CIDRs.
 type Allow struct {
@@ -51,26 +56,41 @@ func (a Allow) HostMatch(host string) bool {
 }
 
 // Allows reports whether host may be contacted. Listed hosts still fail when
-// every resolved address is private and not covered by AllowPrivate.
+// any resolved address is private and not covered by AllowPrivate.
 func (a Allow) Allows(host string, port int) bool {
 	_ = port
-	host = normHost(host)
 	if !a.HostMatch(host) {
 		return false
 	}
+	_, err := a.Addrs(host)
+	return err == nil
+}
+
+// Addrs resolves host once and returns addresses that are safe to dial. It
+// fails with ErrPrivate when any address is private and not in AllowPrivate.
+// Callers dial the returned addresses, not the name, so a second lookup
+// cannot rebind the host.
+func (a Allow) Addrs(host string) ([]net.IP, error) {
+	host = normHost(host)
 	if ip := net.ParseIP(host); ip != nil {
-		return a.ipOK(ip)
+		if !a.ipOK(ip) {
+			return nil, ErrPrivate
+		}
+		return []net.IP{ip}, nil
 	}
 	ips, err := a.lookup(host)
-	if err != nil || len(ips) == 0 {
-		return false
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, errors.New("no address")
 	}
 	for _, ip := range ips {
 		if !a.ipOK(ip) {
-			return false
+			return nil, ErrPrivate
 		}
 	}
-	return true
+	return ips, nil
 }
 
 func (a Allow) lookup(host string) ([]net.IP, error) {
