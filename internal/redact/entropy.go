@@ -25,16 +25,13 @@ func shannon(s string) float64 {
 	return h
 }
 
-func needsScan(s string) bool {
-	if strings.Contains(s, "AKIA") ||
-		strings.Contains(s, "ghp_") || strings.Contains(s, "gho_") || strings.Contains(s, "ghu_") ||
-		strings.Contains(s, "ghs_") || strings.Contains(s, "ghr_") ||
-		strings.Contains(s, "sk-") || strings.Contains(s, "xai-") || strings.Contains(s, "xox") ||
-		strings.Contains(s, "AIza") || strings.Contains(s, "eyJ") || strings.Contains(s, "PRIVATE KEY") ||
-		strings.Contains(s, "password=") || strings.Contains(s, "Password=") ||
-		strings.Contains(s, "Bearer ") || strings.Contains(s, "bearer ") ||
-		strings.Contains(s, "://") || strings.Contains(s, "_live_") || strings.Contains(s, "_test_") {
-		return true
+// needsScan is the fast path. lower is strings.ToLower(s), so hints match
+// any case (PASSWORD=, BEARER).
+func needsScan(s, lower string) bool {
+	for _, r := range compiled {
+		if r.hinted(lower) {
+			return true
+		}
 	}
 	return entropyHint(s)
 }
@@ -65,34 +62,39 @@ func entropyHint(s string) bool {
 	return false
 }
 
+// maskEntropy replaces high-entropy values after '=' or ':'. One pass, one
+// output buffer, so dense input stays linear.
 func maskEntropy(s string) string {
-	b := []byte(s)
+	var out strings.Builder
+	last := 0
 	i := 0
-	for i < len(b) {
-		if b[i] != '=' && b[i] != ':' {
+	for i < len(s) {
+		if s[i] != '=' && s[i] != ':' {
 			i++
 			continue
 		}
 		j := i + 1
-		for j < len(b) && (b[j] == ' ' || b[j] == '\t') {
+		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
 			j++
 		}
 		k := j
-		for k < len(b) && b[k] != ' ' && b[k] != '\n' && b[k] != '\t' && b[k] != '"' && b[k] != '\'' {
+		for k < len(s) && s[k] != ' ' && s[k] != '\n' && s[k] != '\t' && s[k] != '"' && s[k] != '\'' {
 			k++
 		}
-		tok := b[j:k]
-		if len(tok) >= 32 && shannon(string(tok)) > 4.0 && !alreadyMasked(tok) {
-			repl := []byte(Mask)
-			b = append(b[:j], append(repl, b[k:]...)...)
-			i = j + len(repl)
-			continue
+		tok := s[j:k]
+		if len(tok) >= 32 && tok != Mask && shannon(tok) > 4.0 {
+			if last == 0 {
+				out.Grow(len(s))
+			}
+			out.WriteString(s[last:j])
+			out.WriteString(Mask)
+			last = k
 		}
 		i = k
 	}
-	return string(b)
-}
-
-func alreadyMasked(tok []byte) bool {
-	return string(tok) == Mask
+	if last == 0 {
+		return s
+	}
+	out.WriteString(s[last:])
+	return out.String()
 }

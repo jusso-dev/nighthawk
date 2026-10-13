@@ -2,6 +2,7 @@ package redact
 
 import (
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/jusso-dev/nighthawk/internal/event"
@@ -15,6 +16,7 @@ type Rule struct {
 	Name string
 	Re   string
 	Repl string
+	Hint []string
 }
 
 var compiled []compiledRule
@@ -22,6 +24,21 @@ var compiled []compiledRule
 type compiledRule struct {
 	re   *regexp.Regexp
 	repl string
+	hint []string
+}
+
+// hinted reports whether lower contains a literal the rule needs.
+// A rule without hints always runs.
+func (r compiledRule) hinted(lower string) bool {
+	if len(r.hint) == 0 {
+		return true
+	}
+	for _, h := range r.hint {
+		if strings.Contains(lower, h) {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {
@@ -31,7 +48,7 @@ func init() {
 func compile(rules []Rule) []compiledRule {
 	out := make([]compiledRule, 0, len(rules))
 	for _, r := range rules {
-		out = append(out, compiledRule{re: regexp.MustCompile(r.Re), repl: r.Repl})
+		out = append(out, compiledRule{re: regexp.MustCompile(r.Re), repl: r.Repl, hint: r.Hint})
 	}
 	return out
 }
@@ -71,11 +88,14 @@ func (r *Redactor) String(s string) string {
 	extraMu.RLock()
 	extra := r.extra
 	extraMu.RUnlock()
-	if len(extra) == 0 && !needsScan(s) {
+	lower := strings.ToLower(s)
+	if len(extra) == 0 && !needsScan(s, lower) {
 		return s
 	}
 	for _, rule := range compiled {
-		s = rule.re.ReplaceAllString(s, rule.repl)
+		if rule.hinted(lower) {
+			s = rule.re.ReplaceAllString(s, rule.repl)
+		}
 	}
 	for _, re := range extra {
 		s = re.ReplaceAllString(s, Mask)
