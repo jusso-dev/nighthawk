@@ -1,0 +1,200 @@
+ls
+pwd
+git status
+git diff
+git log -1
+git push origin main
+git branch
+go test ./...
+go fmt ./...
+go build ./...
+cat README.md
+echo hello
+mkdir -p tmp
+rm -rf ./build
+rm file.txt
+npm install lodash
+npm test
+git reset HEAD
+git add -A
+git commit -m wip
+python3 -m pytest
+cargo build
+make test
+head README.md
+wc -l main.go
+ls # variant 25
+pwd # variant 26
+git status # variant 27
+git diff # variant 28
+git log -1 # variant 29
+git push origin main # variant 30
+git branch # variant 31
+go test ./... # variant 32
+go fmt ./... # variant 33
+go build ./... # variant 34
+cat README.md # variant 35
+echo hello # variant 36
+mkdir -p tmp # variant 37
+rm -rf ./build # variant 38
+rm file.txt # variant 39
+npm install lodash # variant 40
+npm test # variant 41
+git reset HEAD # variant 42
+git add -A # variant 43
+git commit -m wip # variant 44
+python3 -m pytest # variant 45
+cargo build # variant 46
+make test # variant 47
+head README.md # variant 48
+wc -l main.go # variant 49
+ls # variant 50
+pwd # variant 51
+git status # variant 52
+git diff # variant 53
+git log -1 # variant 54
+git push origin main # variant 55
+git branch # variant 56
+go test ./... # variant 57
+go fmt ./... # variant 58
+go build ./... # variant 59
+cat README.md # variant 60
+echo hello # variant 61
+mkdir -p tmp # variant 62
+rm -rf ./build # variant 63
+rm file.txt # variant 64
+npm install lodash # variant 65
+npm test # variant 66
+git reset HEAD # variant 67
+git add -A # variant 68
+git commit -m wip # variant 69
+python3 -m pytest # variant 70
+cargo build # variant 71
+make test # variant 72
+head README.md # variant 73
+wc -l main.go # variant 74
+ls # variant 75
+pwd # variant 76
+git status # variant 77
+git diff # variant 78
+git log -1 # variant 79
+git push origin main # variant 80
+git branch # variant 81
+go test ./... # variant 82
+go fmt ./... # variant 83
+go build ./... # variant 84
+cat README.md # variant 85
+echo hello # variant 86
+mkdir -p tmp # variant 87
+rm -rf ./build # variant 88
+rm file.txt # variant 89
+npm install lodash # variant 90
+npm test # variant 91
+git reset HEAD # variant 92
+git add -A # variant 93
+git commit -m wip # variant 94
+python3 -m pytest # variant 95
+cargo build # variant 96
+make test # variant 97
+head README.md # variant 98
+wc -l main.go # variant 99
+ls # variant 100
+pwd # variant 101
+git status # variant 102
+git diff # variant 103
+git log -1 # variant 104
+git push origin main # variant 105
+git branch # variant 106
+go test ./... # variant 107
+go fmt ./... # variant 108
+go build ./... # variant 109
+cat README.md # variant 110
+echo hello # variant 111
+mkdir -p tmp # variant 112
+rm -rf ./build # variant 113
+rm file.txt # variant 114
+npm install lodash # variant 115
+npm test # variant 116
+git reset HEAD # variant 117
+git add -A # variant 118
+git commit -m wip # variant 119
+python3 -m pytest # variant 120
+cargo build # variant 121
+make test # variant 122
+head README.md # variant 123
+wc -l main.go # variant 124
+ls # variant 125
+pwd # variant 126
+git status # variant 127
+git diff # variant 128
+git log -1 # variant 129
+git push origin main # variant 130
+git branch # variant 131
+go test ./... # variant 132
+go fmt ./... # variant 133
+go build ./... # variant 134
+cat README.md # variant 135
+echo hello # variant 136
+mkdir -p tmp # variant 137
+rm -rf ./build # variant 138
+rm file.txt # variant 139
+npm install lodash # variant 140
+npm test # variant 141
+git reset HEAD # variant 142
+git add -A # variant 143
+git commit -m wip # variant 144
+python3 -m pytest # variant 145
+cargo build # variant 146
+make test # variant 147
+head README.md # variant 148
+wc -l main.go # variant 149
+git push origin feature
+git push -u origin feature/login
+git push --follow-tags
+git fetch --prune
+git checkout -b fix/typo
+git rebase origin/main
+git stash list
+rm -rf node_modules
+rm -rf dist/ .next/
+rm -f coverage.out
+grep foo src/
+grep -rn "process.env" src/
+rg TODO internal/
+cat .env.example
+cp .env.example .env.sample
+ls -la ~/.ssh
+ssh-add -l
+pip install requests
+pip install -r requirements.txt
+pip install -e .
+npm i lodash
+npm install @types/node
+npm run build
+yarn add react
+cargo install ripgrep
+go install golang.org/x/tools/gopls@latest
+go mod tidy
+go vet ./...
+curl -s https://api.github.com/repos/x/y | jq .name
+curl -fsSL https://example.com/data.json | python3 -m json.tool
+curl -o install.sh https://example.com/install.sh
+source .venv/bin/activate
+python3 -m venv .venv
+docker compose up -d
+docker run --rm -it alpine sh
+kill 1234
+pkill -f vite
+pgrep node
+cat ~/.zshrc
+grep hooks ~/.claude/settings.json
+nighthawk status
+nighthawk mode get
+echo $HTTPS_PROXY
+env | grep -i proxy
+find . -name "*.go" -newer go.mod
+sed -i '' 's/foo/bar/' main.go
+tar -czf build.tgz dist
+make lint
+terraform plan
+npx prisma generate

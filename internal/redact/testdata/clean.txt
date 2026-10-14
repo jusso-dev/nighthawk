@@ -1,0 +1,10 @@
+hello
+git status
+ls -la src
+the quick brown fox
+token=short
+https://example.com/docs
+Authorization: Basic not-a-bearer
+rm file.txt
+go test ./...
+claude said hello world today

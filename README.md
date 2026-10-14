@@ -6,8 +6,12 @@ in your Herdr sessions (Claude Code, Codex, Grok Build, OpenCode and others),
 records what they spend and what they touch, and blocks malicious actions when
 nobody is watching.
 
-> Status: M0 skeleton. Nothing is captured or blocked yet. See the
-> [roadmap issue](../../issues?q=is%3Aissue+label%3Aroadmap) for the plan.
+> Status: M0–M3 are implemented in this tree. The daemon, hooks, policy,
+> MCP proxy, egress proxy, audit log, TUI, local web UI, alerts, SIEM
+> forwarding and cluster spend query are in the `nighthawk` binary.
+> Linux nftables apply still needs a root Linux host. Live Herdr subscribe
+> still needs Herdr 0.9.3. See the
+> [roadmap issue](../../issues?q=is%3Aissue+label%3Aroadmap).
 
 ## Vision
 
@@ -17,7 +21,7 @@ into an exfiltration tool. Nighthawk gives you one place to see what every agent
 did, what it cost, and what it was stopped from doing, and it enforces a
 fail-closed policy when you are away.
 
-## Features (planned)
+## Features
 
 - **Spend:** tokens and cost per agent, session, task and model, parsed from agent
   hooks and transcripts.

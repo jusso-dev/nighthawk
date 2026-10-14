@@ -1,0 +1,262 @@
+version: 1
+mode: unattended
+default: block
+rules:
+  - id: nh.cmd.curl-pipe-shell
+    severity: critical
+    why: curl or wget piped into a shell
+    match:
+      kind: command
+      command_regex: '(curl|wget)\b[^|;&]*\|\s*(sudo\s+(-\S+\s+)*)?(\S*/)?(env\s+(-\S+\s+)*)?(\S*/)?(((ba|z|da|fi|k|c|tc|a)?sh)\b|(python[0-9.]*|perl|ruby|node|php)(\s+-[A-Za-z]*)*\s*($|[;&|)]))|(^|\s)((ba|z|da|k)?sh|source|eval|\.)\s+(-c\s+)?["'']?\$\(\s*(curl|wget)\b'
+    action: block
+  - id: nh.cmd.bash-process-sub
+    severity: critical
+    why: shell process substitution that downloads a script
+    match:
+      kind: command
+      command_regex: '((ba|z|da|k)?sh|source|\.)\s+(-\S+\s+)*<\s*\(\s*(curl|wget)'
+    action: block
+  - id: nh.cmd.rm-rf
+    severity: critical
+    why: recursive delete of root, home, or a parent directory
+    match:
+      kind: command
+      command_regex: '(^|[\s(`])rm\s([^;&|]*\s)?(-[A-Za-z]*[rR][A-Za-z]*|--recursive)(\s[^;&|]*)?\s["'']?(/|/\*|~|~/\S*|\$HOME(/\S*)?|\$\{HOME\}(/\S*)?|\.\.(/\S*)?|/(etc|usr|bin|sbin|lib|var|opt|home|Users|System|Library|Applications|private|boot|root|dev)/?\*?)["'']?(\s|$|[;&|)])'
+    action: block
+  - id: nh.git.force-push
+    severity: high
+    why: force push rewrites remote history
+    match:
+      kind: command
+      command_regex: '\bgit\s+(-\S+\s+(\S+\s+)?)*push\b[^;&|]*(\s--force\b|\s--force-with-lease\b|\s--force-if-includes\b|\s--mirror\b|\s-[A-Za-z]*f[A-Za-z]*\b|\s\+\S)'
+    action: ask_human
+  - id: nh.git.reset-hard
+    severity: high
+    why: hard reset discards commits
+    match:
+      kind: command
+      command_regex: 'git\s+reset\s+--hard\b'
+    action: ask_human
+  - id: nh.git.remote-delete
+    severity: high
+    why: deleting a remote branch
+    match:
+      kind: command
+      command_regex: '\bgit\s+(-\S+\s+(\S+\s+)?)*push\b[^;&|]*(\s:\S|\s--delete\b|\s--prune\b|\s-[A-Za-z]*d[A-Za-z]*\b)'
+    action: ask_human
+  - id: nh.sql.drop
+    severity: critical
+    why: destructive SQL
+    match:
+      kind: command
+      command_regex: '(?i)\b(drop\s+database|drop\s+table|truncate\s+(table\s+)?)\b'
+    action: block
+  - id: nh.cmd.migrate-reset
+    severity: critical
+    why: destructive migration or terraform destroy
+    match:
+      kind: command
+      command_regex: 'prisma\s+migrate\s+reset|terraform\s+destroy\b'
+    action: block
+  - id: nh.self.approve
+    severity: critical
+    why: approvals are human only, never from the agent
+    match:
+      kind: command
+      command_regex: '(^|\$\(|`|\b(sudo|doas|env|exec|command|nohup|time|xargs)\s+(-\S+\s+)*|\bgo\s+run\s+(-\S+\s+)*)([A-Za-z_]\w*=\S*\s+)*(\S*/)?nighthawk\s+((approve|deny)\b|mcp\s+pins\b[^;&|]*--approve)'
+    action: block
+  - id: nh.self.cli
+    severity: high
+    why: agent changing Nighthawk mode or hook setup
+    match:
+      kind: command
+      command_regex: '(^|\$\(|`|\b(sudo|doas|env|exec|command|nohup|time|xargs)\s+(-\S+\s+)*|\bgo\s+run\s+(-\S+\s+)*)([A-Za-z_]\w*=\S*\s+)*(\S*/)?nighthawk\s+(mode\s+set|setup)\b'
+    action: block
+  - id: nh.self.protected-cmd
+    severity: critical
+    why: shell write to Nighthawk state or config, agent hook config, or shell rc files
+    match:
+      kind: command
+      command_regex: '(>>?\s*["'']?\S*|(^|[\s(`])(rm|mv|tee|truncate|chmod|chown|chflags|unlink|shred|sponge|nc|ncat|socat|curl)\s([^;&|]*\s)?["'']?\S*|(^|[\s(`])(sed|gsed|perl|ruby|yq)\s([^;&|]*\s)?(-[A-Za-z]*i|--in-place)\S*\s([^;&|]*\s)?["'']?\S*|\bof=["'']?\S*|(^|\s)(cd|pushd)\s+["'']?\S*|\b(python[0-9.]*|node|ruby|perl|php)\s+(-\S+\s+)*-[A-Za-z]*[ce]\b.*)(?i:state(_home\}?)?/nighthawk|config(_home\}?)?/nighthawk|nighthawk_(state_dir|config)|nighthawk\.sock|daemon\.pid|\.claude/settings[^/\s]*\.json|\.grok/settings\.json|\.codex/config\.toml|\.(bash|zsh)rc\b|\.zshenv|\.zprofile|\.zlogin|\.bash_profile|\.bash_login|\.profile\b|\.config/fish/|(\.local|/usr/local|/opt/homebrew)/bin/nighthawk)|(^|[\s(`])(cp|ln|install|rsync|scp)\s[^;&|]*\s["'']?\S*(?i:state(_home\}?)?/nighthawk|config(_home\}?)?/nighthawk|nighthawk_(state_dir|config)|nighthawk\.sock|daemon\.pid|\.claude/settings[^/\s]*\.json|\.grok/settings\.json|\.codex/config\.toml|\.(bash|zsh)rc\b|\.zshenv|\.zprofile|\.zlogin|\.bash_profile|\.bash_login|\.profile\b|\.config/fish/|(\.local|/usr/local|/opt/homebrew)/bin/nighthawk)\S*\s*($|[;&|)])|(^|\s)find\s[^;&|]*(?i:state(_home\}?)?/nighthawk|config(_home\}?)?/nighthawk|nighthawk_(state_dir|config)|nighthawk\.sock|daemon\.pid|\.claude/settings[^/\s]*\.json|\.grok/settings\.json|\.codex/config\.toml|\.(bash|zsh)rc\b|\.zshenv|\.zprofile|\.zlogin|\.bash_profile|\.bash_login|\.profile\b|\.config/fish/|(\.local|/usr/local|/opt/homebrew)/bin/nighthawk)[^;&|]*\s-(delete|exec|execdir|ok|okdir|fprint)\b'
+    action: block
+  - id: nh.secret.command
+    severity: critical
+    why: shell read of credential files
+    match:
+      kind: command
+      command_regex: '(^|\$\(|`|<\(|\b(sudo|doas|xargs|env|command|exec|time|nice|nohup)\s+(-\S+\s+)*)([A-Za-z_]\w*=\S*\s+)*((cat|head|tail|less|more|bat|cp|mv|scp|rsync|source|grep|egrep|fgrep|rg|ag|ack|awk|gawk|sed|base64|xxd|od|hexdump|strings|openssl|gpg|tar|zip|nl|tac|sort|uniq|cut|diff|jq|yq|curl|nc|dd|vim?|nano|open)\b|\.)[^;&|]*([\s/"''=:(@<]\.env([\s"''):;&|]|$|\.(local|prod|production|dev|development|staging|test)\b)|\.ssh/|\.aws/|gh/hosts\.yml|\.netrc\b|\.pypirc\b|\.docker/config\.json|\.kube/config\b|\.gnupg/|Keychains/|\.keychain(-db)?\b|Login Data|/Cookies\b)|\b(python[0-9.]*|node|ruby|perl|php|osascript)\s([^;&|]*\s)?-[A-Za-z]*[ce]\b.*([\s/"''=:(@<]\.env([\s"''):;&|]|$|\.(local|prod|production|dev|development|staging|test)\b)|\.ssh/|\.aws/|gh/hosts\.yml|\.netrc\b|\.pypirc\b|\.docker/config\.json|\.kube/config\b|\.gnupg/|Keychains/|\.keychain(-db)?\b|Login Data|/Cookies\b)|\bsecurity\s+(find-(generic|internet)-password|dump-keychain|export|unlock-keychain)\b'
+    action: block
+  - id: nh.secret.read
+    severity: critical
+    why: tool read of credential files
+    match:
+      kind: tool_call
+      path_glob: &secret_paths
+        - ".env"
+        - "**/.env"
+        - "**/.env.{local,prod,production,dev,development,staging,test}"
+        - "**/.env.*.local"
+        - "**/.ssh"
+        - "**/.ssh/**"
+        - "**/.aws"
+        - "**/.aws/**"
+        - "**/.gnupg/**"
+        - "**/.netrc"
+        - "**/.pypirc"
+        - "**/.docker/config.json"
+        - "**/.kube/config"
+        - "**/.config/gh/hosts.yml"
+        - "**/*keychain*"
+        - "**/Keychains/**"
+        - "**/Login Data"
+        - "**/Cookies"
+    action: block
+  - id: nh.secret.skill
+    severity: critical
+    why: skill read that resolves to a credential file
+    match:
+      kind: skill
+      path_glob: *secret_paths
+    action: block
+  - id: nh.secret.write
+    severity: critical
+    why: tool write of credential files
+    match:
+      kind: file_write
+      path_glob:
+        - ".env"
+        - "**/.env"
+        - "**/.env.{local,prod,production,dev,development,staging,test}"
+        - "**/.ssh/**"
+        - "**/.aws/**"
+        - "**/.netrc"
+    action: block
+  - id: nh.self.hook-config
+    severity: critical
+    why: writes that can disable hooks or Nighthawk
+    match:
+      kind: file_write
+      path_glob:
+        - "**/.claude/settings*.json"
+        - "**/.grok/settings.json"
+        - "**/.codex/config.toml"
+        - "**/.config/nighthawk/**"
+        - "**/.local/state/nighthawk/**"
+        - "**/bin/nighthawk"
+        - "**/.bashrc"
+        - "**/.zshrc"
+        - "**/.zshenv"
+        - "**/.zprofile"
+        - "**/.zlogin"
+        - "**/.bash_profile"
+        - "**/.bash_login"
+        - "**/.profile"
+        - "**/.config/fish/**"
+    action: block
+  - id: nh.cmd.unset-proxy
+    severity: high
+    why: stripping the egress proxy or TLS verification
+    match:
+      kind: command
+      command_regex: '(?i:\bunset\s+([^\s;&|]+\s+)*(https?|all|ftp)_proxy\b|\benv\s+([^;&|]*\s)?(-u\s*|--unset[= ])(https?|all)_proxy\b|(^|\s)(https?|all)_proxy=(["'']{2})?(\s|$)|(^|\s)no_proxy=["'']?\*)|\benv\s+(-\S+\s+)*(-i|--ignore-environment)\b|--noproxy\s+["'']?\*|--no-verify|sandbox_mode\s*=\s*[''"]?danger'
+    action: block
+  - id: nh.cmd.pkg-url
+    severity: high
+    why: package install from a URL
+    match:
+      kind: command
+      command_regex: '\b(npm|pnpm|yarn|bun|pip[0-9.]*|pipx|uv|gem|cargo)\s+(pip\s+)?(install|i|add|update|upgrade)\b[^;&|]*\s["'']?((git\+)?(https?|git|ssh|file)://|git\+|(github|gitlab|bitbucket):)|\bcargo\s+install\b[^;&|]*\s--git\b'
+    action: block
+  - id: nh.net.blob-exfil
+    severity: high
+    why: high-entropy payload to a host outside the allowlist
+    match:
+      kind: network
+      host_not_in: allowlist
+      command_regex: '[A-Za-z0-9+/]{40,}={0,2}'
+    action: block
+  - id: nh.net.unknown-host
+    severity: high
+    why: destination host is not on the allowlist
+    match:
+      kind: network
+      host_not_in: allowlist
+    action: block
+  - id: nh.self.pkill
+    severity: critical
+    why: agent trying to stop Nighthawk
+    match:
+      kind: command
+      command_regex: '(^|\$\(|`|\b(sudo|doas|env|exec|command|nohup|xargs)\s+(-\S+\s+)*)(pkill|killall|kill)\b[^;&|]*(?i:nighthawk|daemon\.pid)|\b(pgrep|pidof)\b.*nighthawk.*\bkill(all)?\b|daemon\.pid.*\bkill\b|\b(launchctl\s+(unload|bootout|remove|stop|kill|disable)|systemctl\s+(--user\s+)?(stop|kill|disable|mask))\b.*nighthawk'
+    action: block
+  - id: nh.self.kill-lookup
+    severity: high
+    why: killing processes by lookup or en masse can stop Nighthawk
+    match:
+      kind: command
+      command_regex: '(^|\$\(|`|\b(sudo|doas|env|exec|command|nohup|xargs)\s+(-\S+\s+)*)kill\b[^;&|]*(\$\(|`)\s*(pgrep|pidof)\b|\b(pgrep|pidof)\b[^;&]*\|\s*xargs\s+(-\S+\s+)*kill\b|(^|\$\(|`|\b(sudo|doas|env|exec|command|nohup|xargs)\s+(-\S+\s+)*)kill\s+(-\S+\s+)*-1\s*($|[;&|)])|(^|\$\(|`|\b(sudo|doas|env|exec|command|nohup|xargs)\s+(-\S+\s+)*)(pkill|killall)\s+(-\S+\s+)*-u\b'
+    action: block
+  - id: nh.spend.session
+    severity: high
+    why: session spend is over the budget
+    match:
+      spend_over:
+        scope: session
+        usd: 20
+    action: pause_pane
+  - id: nh.loop.repeat
+    severity: high
+    why: the same call repeated inside a minute
+    match:
+      loop:
+        count: 10
+        within: 1m
+    action: pause_pane
+  - id: nh.allow.network
+    severity: info
+    why: host is on the allowlist
+    match:
+      kind: network
+    action: allow
+  - id: nh.allow.file
+    severity: info
+    why: file write matched no earlier rule
+    match:
+      kind: file_write
+    action: allow
+  - id: nh.allow.mcp
+    severity: info
+    why: mcp call matched no earlier rule
+    match:
+      kind: mcp_call
+    action: allow
+  - id: nh.allow.tool
+    severity: info
+    why: tool call matched no earlier rule
+    match:
+      kind: tool_call
+    action: allow
+  - id: nh.allow.commands
+    severity: info
+    why: command that matched no earlier rule
+    match:
+      kind: command
+    action: allow
+  - id: nh.allow.skill
+    severity: info
+    why: skill use is recorded
+    match:
+      kind: skill
+    action: allow
+  - id: nh.allow.tokens
+    severity: info
+    why: token usage is recorded
+    match:
+      kind: token_usage
+    action: allow
+  - id: nh.allow.pane
+    severity: info
+    why: pane lifecycle is recorded
+    match:
+      kind: pane
+    action: allow

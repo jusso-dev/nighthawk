@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Placeholder. Implemented by the M0 and M1 issues.
 set -euo pipefail
-echo "nighthawk: open-pane.sh not implemented yet" >&2
-exit 0
+bin="${HERDR_BIN_PATH:-herdr}"
+exec "$bin" plugin pane open --plugin nighthawk --entrypoint "${1:-dashboard}"

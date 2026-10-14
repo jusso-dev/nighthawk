@@ -1,0 +1,1 @@
+{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"Write","tool_input":{"file_path":"a.txt","content":"hi"}}
